@@ -230,3 +230,14 @@ export interface MemberBalance {
   owed: number
   net: number
 }
+
+/** Pairwise view from current user's perspective (GPay-style) */
+export interface PersonPairBalance {
+  userId: string
+  name: string
+  avatarUrl?: string | null
+  /** Positive => they owe you; negative => you owe them */
+  net: number
+  unpaidExpenseCount: number
+  relatedExpenseIds: string[]
+}

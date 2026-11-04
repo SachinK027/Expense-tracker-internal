@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import toast from 'react-hot-toast'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -9,17 +9,25 @@ import { Spinner } from '@/components/ui/Loading'
 interface Props {
   groupId: string
   members: GroupMember[]
+  prefill?: { fromId?: string; toId?: string; amount?: number } | null
   onDone: () => void
 }
 
-export function SettlementForm({ groupId, members, onDone }: Props) {
+export function SettlementForm({ groupId, members, prefill, onDone }: Props) {
   const { user } = useAuth()
-  const [fromId, setFromId] = useState(user?.id || '')
-  const [toId, setToId] = useState('')
-  const [amount, setAmount] = useState('')
+  const [fromId, setFromId] = useState(prefill?.fromId || user?.id || '')
+  const [toId, setToId] = useState(prefill?.toId || '')
+  const [amount, setAmount] = useState(prefill?.amount ? String(prefill.amount) : '')
   const [date, setDate] = useState(todayISO())
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!prefill) return
+    if (prefill.fromId) setFromId(prefill.fromId)
+    if (prefill.toId) setToId(prefill.toId)
+    if (prefill.amount) setAmount(String(prefill.amount))
+  }, [prefill])
 
   const label = (m: GroupMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
 
@@ -51,12 +59,16 @@ export function SettlementForm({ groupId, members, onDone }: Props) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
-      <p className="text-xs text-slate-500">Settlements are not shared expenses — they only update who owes whom.</p>
+      <p className="text-xs text-slate-500">
+        Settlements are payments between members — they are never counted as a new shared expense.
+      </p>
       <div>
         <label className="label">From (payer)</label>
         <select className="input" value={fromId} onChange={(e) => setFromId(e.target.value)} required>
           {members.map((m) => (
-            <option key={m.user_id} value={m.user_id}>{label(m)}</option>
+            <option key={m.user_id} value={m.user_id}>
+              {label(m)}
+            </option>
           ))}
         </select>
       </div>
@@ -64,15 +76,27 @@ export function SettlementForm({ groupId, members, onDone }: Props) {
         <label className="label">To (receiver)</label>
         <select className="input" value={toId} onChange={(e) => setToId(e.target.value)} required>
           <option value="">Select…</option>
-          {members.filter((m) => m.user_id !== fromId).map((m) => (
-            <option key={m.user_id} value={m.user_id}>{label(m)}</option>
-          ))}
+          {members
+            .filter((m) => m.user_id !== fromId)
+            .map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {label(m)}
+              </option>
+            ))}
         </select>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Amount (₹)</label>
-          <input type="number" step="0.01" min="0.01" className="input" required value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            className="input"
+            required
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
         </div>
         <div>
           <label className="label">Date</label>
@@ -81,9 +105,9 @@ export function SettlementForm({ groupId, members, onDone }: Props) {
       </div>
       <div>
         <label className="label">Notes</label>
-        <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="UPI / cash…" />
       </div>
-      <button type="submit" className="btn-primary w-full" disabled={saving}>
+      <button type="submit" className="btn-primary w-full !rounded-full" disabled={saving}>
         {saving ? <Spinner className="!border-white/30 !border-t-white" /> : 'Record payment'}
       </button>
     </form>
