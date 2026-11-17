@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Users, Link2 } from 'lucide-react'
+import { Plus, Users, Link2, ArrowUpRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -14,7 +14,7 @@ import { JoinGroupForm } from './JoinGroupForm'
 export function GroupsList() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
-  const [groups, setGroups] = useState<(ExpenseGroup & { member_count?: number })[]>([])
+  const [groups, setGroups] = useState<ExpenseGroup[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
 
@@ -27,10 +27,11 @@ export function GroupsList() {
       .eq('user_id', user.id)
     if (error) toast.error(error.message)
     else {
-      const list = (memberships || [])
-        .map((m) => m.expense_groups as unknown as ExpenseGroup)
-        .filter(Boolean)
-      setGroups(list)
+      setGroups(
+        (memberships || [])
+          .map((m) => m.expense_groups as unknown as ExpenseGroup)
+          .filter(Boolean)
+      )
     }
     setLoading(false)
   }, [user])
@@ -43,17 +44,17 @@ export function GroupsList() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="page-title">Group Expenses</h1>
-          <p className="mt-1 text-sm text-slate-500">Splitwise-style shared expenses & settlements</p>
+          <h1 className="page-title">Groups</h1>
+          <p className="mt-1 text-sm text-slate-500">Split bills, track who paid, settle when ready</p>
         </div>
         <div className="flex gap-2">
-          <button type="button" className="btn-secondary" onClick={() => setJoinOpen(true)}>
+          <button type="button" className="btn-secondary !rounded-2xl" onClick={() => setJoinOpen(true)}>
             <Link2 className="h-4 w-4" /> Join
           </button>
-          <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" /> Create group
+          <button type="button" className="btn-primary !rounded-2xl" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" /> New group
           </button>
         </div>
       </div>
@@ -63,7 +64,7 @@ export function GroupsList() {
           <EmptyState
             icon={Users}
             title="No groups yet"
-            description="Create a group or join with an invite code"
+            description="Create a household or trip group, or join with an invite code"
             action={
               <div className="flex gap-2">
                 <button type="button" className="btn-secondary" onClick={() => setJoinOpen(true)}>Join</button>
@@ -73,39 +74,38 @@ export function GroupsList() {
           />
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {groups.map((g) => (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {groups.map((g, i) => (
             <Link
               key={g.id}
               to={`/groups/${g.id}`}
-              className="card p-5 transition hover:border-brand-300 dark:hover:border-brand-700 hover:shadow-soft"
+              className="group relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white dark:bg-surface-dark-muted p-5 shadow-soft transition hover:shadow-card hover:border-brand-300 dark:hover:border-brand-700"
             >
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300 font-display text-xl font-bold">
-                {g.name.slice(0, 1).toUpperCase()}
+              <div
+                className="absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-30 blur-2xl"
+                style={{ background: ['#2d9266', '#0ea5e9', '#f59e0b', '#8b5cf6'][i % 4] }}
+              />
+              <div className="relative flex items-start justify-between gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300 font-display text-xl font-bold">
+                  {g.name.slice(0, 1).toUpperCase()}
+                </div>
+                <ArrowUpRight className="h-5 w-5 text-slate-300 group-hover:text-brand-600 transition" />
               </div>
-              <h2 className="mt-4 font-display text-lg font-semibold">{g.name}</h2>
-              <p className="mt-1 line-clamp-2 text-sm text-slate-500">{g.description || 'No description'}</p>
-              <p className="mt-3 text-xs text-slate-400">Code: {g.invite_code}</p>
+              <h2 className="relative mt-4 font-display text-xl font-semibold">{g.name}</h2>
+              <p className="relative mt-1 line-clamp-2 text-sm text-slate-500">{g.description || 'Open group →'}</p>
+              <p className="relative mt-4 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Code {g.invite_code}
+              </p>
             </Link>
           ))}
         </div>
       )}
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create group">
-        <CreateGroupForm
-          onDone={() => {
-            setCreateOpen(false)
-            load()
-          }}
-        />
+        <CreateGroupForm onDone={() => { setCreateOpen(false); load() }} />
       </Modal>
       <Modal open={joinOpen} onClose={() => setJoinOpen(false)} title="Join with invite code">
-        <JoinGroupForm
-          onDone={() => {
-            setJoinOpen(false)
-            load()
-          }}
-        />
+        <JoinGroupForm onDone={() => { setJoinOpen(false); load() }} />
       </Modal>
     </div>
   )

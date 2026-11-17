@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, MoreVertical, MessageSquare, History } from 'lucide-react'
+import {
+  ArrowLeft, Copy, MessageSquare, History, Users, Plus, HandCoins, CheckCircle2, IndianRupee,
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, parseISO, isSameDay } from 'date-fns'
 import { supabase } from '@/lib/supabase'
@@ -22,7 +24,7 @@ import { GroupExpenseForm } from './GroupExpenseForm'
 import { SettlementForm } from './SettlementForm'
 import { MarkPaidForm } from './MarkPaidForm'
 
-type MainTab = 'chat' | 'expenses' | 'history'
+type MainTab = 'balances' | 'requests' | 'history'
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -32,7 +34,7 @@ export function GroupDetail() {
   const [members, setMembers] = useState<GroupMember[]>([])
   const [expenses, setExpenses] = useState<GroupExpense[]>([])
   const [settlements, setSettlements] = useState<Settlement[]>([])
-  const [tab, setTab] = useState<MainTab>('expenses')
+  const [tab, setTab] = useState<MainTab>('balances')
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [settleOpen, setSettleOpen] = useState(false)
   const [markPaidExpense, setMarkPaidExpense] = useState<GroupExpense | null>(null)
@@ -115,8 +117,7 @@ export function GroupDetail() {
   const nameOf = (uid: string) => memberMeta.find((m) => m.user_id === uid)?.name || 'Someone'
   const suggestions = useMemo(() => suggestSettlements(balances), [balances])
 
-  // Chat = only split requests (title is user note)
-  const chatFeed = useMemo(
+  const requestFeed = useMemo(
     () => [...expenses].sort((a, b) => +parseISO(b.created_at || b.expense_date) - +parseISO(a.created_at || a.expense_date)),
     [expenses]
   )
@@ -142,117 +143,170 @@ export function GroupDetail() {
     return (
       <div className="card p-8 text-center">
         <p>Group not found</p>
-        <Link to="/groups" className="btn-primary mt-4 inline-flex">
-          Back
-        </Link>
+        <Link to="/groups" className="btn-primary mt-4 inline-flex">Back</Link>
       </div>
     )
   }
 
   return (
-    <div className="relative mx-auto max-w-lg -mx-4 sm:mx-auto min-h-[70vh] pb-28">
-      <div className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-surface-dark/95 backdrop-blur px-4 pt-3">
-        <div className="flex items-center gap-2 mb-2">
-          <Link to="/groups" className="btn-ghost !p-2 -ml-2">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-xl font-semibold leading-tight">{group.name}</h1>
-            <p className="text-xs text-slate-500">{members.length} members</p>
+    <div className="mx-auto max-w-3xl space-y-6 pb-8">
+      {/* Header */}
+      <div className="relative overflow-hidden rounded-3xl border border-brand-200/60 dark:border-brand-900 bg-gradient-to-br from-brand-50 via-white to-teal-50 dark:from-brand-950 dark:via-surface-dark-muted dark:to-slate-900 p-5 sm:p-7">
+        <div className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-brand-400/20 blur-3xl" />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <Link to="/groups" className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-700 dark:text-brand-300 hover:underline mb-3">
+              <ArrowLeft className="h-3.5 w-3.5" /> All groups
+            </Link>
+            <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 dark:text-white">
+              {group.name}
+            </h1>
+            <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400 line-clamp-2">
+              {group.description || 'Shared expenses for this group'}
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <div className="flex -space-x-2">
+                {members.slice(0, 5).map((m) => (
+                  <Avatar
+                    key={m.id}
+                    name={m.profiles?.full_name}
+                    email={m.profiles?.email}
+                    url={m.profiles?.avatar_url}
+                    size="sm"
+                    className="ring-2 ring-white dark:ring-surface-dark-muted"
+                  />
+                ))}
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 dark:bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
+                <Users className="h-3.5 w-3.5" /> {members.length} members
+              </span>
+              <button type="button" onClick={copyInvite} className="inline-flex items-center gap-1.5 rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white hover:bg-brand-700">
+                <Copy className="h-3.5 w-3.5" /> Invite
+              </button>
+            </div>
           </div>
-          <button type="button" className="btn-ghost !p-2" onClick={copyInvite} title="Copy invite">
-            <Copy className="h-4 w-4" />
-          </button>
-          <button type="button" className="btn-ghost !p-2" title="More">
-            <MoreVertical className="h-4 w-4" />
-          </button>
+
+          <div className="flex sm:flex-col gap-2 shrink-0">
+            <button type="button" className="btn-primary !rounded-2xl shadow-md shadow-brand-600/20" onClick={() => setExpenseOpen(true)}>
+              <Plus className="h-4 w-4" /> New split
+            </button>
+            <button type="button" className="btn-secondary !rounded-2xl" onClick={() => { setSettlePrefill(null); setSettleOpen(true) }}>
+              <HandCoins className="h-4 w-4" /> Settle up
+            </button>
+          </div>
         </div>
 
-        <div className="flex">
-          {([
-            ['chat', 'Chat'],
-            ['expenses', 'Expenses'],
-            ['history', 'History'],
-          ] as const).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              className={cn(
-                'flex-1 py-3 text-sm font-semibold border-b-2 transition',
-                tab === k ? 'border-sky-600 text-sky-700 dark:text-sky-400' : 'border-transparent text-slate-500'
-              )}
-              onClick={() => setTab(k)}
-            >
-              {label}
-            </button>
-          ))}
+        {/* Balance strip */}
+        <div className="relative mt-6 grid grid-cols-2 gap-3">
+          <div className="rounded-2xl bg-white/90 dark:bg-slate-900/60 border border-rose-100 dark:border-rose-900/40 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-500">You owe</p>
+            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-rose-600">{formatCurrency(totalOwedByYou)}</p>
+          </div>
+          <div className="rounded-2xl bg-white/90 dark:bg-slate-900/60 border border-emerald-100 dark:border-emerald-900/40 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600">Owed to you</p>
+            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-emerald-600">{formatCurrency(totalOwedToYou)}</p>
+          </div>
         </div>
       </div>
 
-      {/* EXPENSES — person balances */}
-      {tab === 'expenses' && (
-        <div className="px-4 pt-4 space-y-5">
-          <div className="grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4">
-            <div>
-              <p className="text-lg font-semibold tabular-nums text-rose-600">{formatCurrency(totalOwedByYou)}</p>
-              <p className="text-xs text-slate-500 mt-0.5">Owed by you</p>
-            </div>
-            <div>
-              <p className="text-lg font-semibold tabular-nums text-emerald-600">{formatCurrency(totalOwedToYou)}</p>
-              <p className="text-xs text-slate-500 mt-0.5">Owed to you</p>
-            </div>
-          </div>
+      {/* Tabs */}
+      <div className="flex gap-1 rounded-2xl bg-slate-100/80 dark:bg-slate-800/80 p-1.5">
+        {([
+          ['balances', 'Balances', IndianRupee],
+          ['requests', 'Requests', MessageSquare],
+          ['history', 'History', History],
+        ] as const).map(([k, label, Icon]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTab(k)}
+            className={cn(
+              'flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition',
+              tab === k
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            )}
+          >
+            <Icon className="h-4 w-4" />
+            <span className="hidden sm:inline">{label}</span>
+            <span className="sm:hidden">{label}</span>
+          </button>
+        ))}
+      </div>
 
+      {/* BALANCES */}
+      {tab === 'balances' && (
+        <div className="space-y-6">
           {pairs.length === 0 ? (
-            <EmptyState icon={MessageSquare} title="No members yet" description="Invite people with the group code" />
+            <div className="card"><EmptyState icon={Users} title="Invite members" description="Balances appear once people join and split" /></div>
           ) : (
             <>
               {owedByYou.length > 0 && (
-                <PersonSection title="Owed by you" people={owedByYou} tone="owe" onSelect={setPerson} />
+                <BalanceBlock title="You need to pay" hint="Outstanding to these members" tone="owe">
+                  {owedByYou.map((p) => (
+                    <PersonRow key={p.userId} person={p} tone="owe" onClick={() => setPerson(p)} />
+                  ))}
+                </BalanceBlock>
               )}
               {owedToYou.length > 0 && (
-                <PersonSection
-                  title={`${owedToYou.length} ${owedToYou.length === 1 ? 'person' : 'people'} owe${owedToYou.length === 1 ? 's' : ''} you`}
-                  people={owedToYou}
-                  tone="owed"
-                  onSelect={setPerson}
-                />
+                <BalanceBlock title="Waiting to receive" hint="These members owe you" tone="owed">
+                  {owedToYou.map((p) => (
+                    <PersonRow key={p.userId} person={p} tone="owed" onClick={() => setPerson(p)} />
+                  ))}
+                </BalanceBlock>
               )}
               {settledPeople.length > 0 && (
-                <PersonSection title="Settled" people={settledPeople} tone="settled" onSelect={setPerson} />
+                <BalanceBlock title="Settled" hint="No open balance" tone="settled">
+                  {settledPeople.map((p) => (
+                    <PersonRow key={p.userId} person={p} tone="settled" onClick={() => setPerson(p)} />
+                  ))}
+                </BalanceBlock>
+              )}
+              {!owedByYou.length && !owedToYou.length && (
+                <div className="card p-8 text-center">
+                  <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
+                  <p className="mt-3 font-display text-lg font-semibold">All clear</p>
+                  <p className="text-sm text-slate-500 mt-1">No open balances in this group</p>
+                </div>
               )}
             </>
           )}
         </div>
       )}
 
-      {/* CHAT — only split requests; title = user note */}
-      {tab === 'chat' && (
-        <div className="px-4 pt-3 space-y-3">
-          {chatFeed.length === 0 ? (
-            <EmptyState
-              icon={MessageSquare}
-              title="No requests yet"
-              description="Create a split — the note becomes “Requested for …”"
-              action={
-                <button type="button" className="btn-primary !rounded-full" onClick={() => setExpenseOpen(true)}>
-                  Split expense
-                </button>
-              }
-            />
+      {/* REQUESTS (feed — not a chat clone) */}
+      {tab === 'requests' && (
+        <div className="space-y-4">
+          {requestFeed.length === 0 ? (
+            <div className="card">
+              <EmptyState
+                icon={MessageSquare}
+                title="No splits yet"
+                description="Add a note like “movie tickets” or “lunch” when you split"
+                action={
+                  <button type="button" className="btn-primary" onClick={() => setExpenseOpen(true)}>
+                    <Plus className="h-4 w-4" /> Create first split
+                  </button>
+                }
+              />
+            </div>
           ) : (
-            chatFeed.map((expense, idx) => {
-              const prev = chatFeed[idx - 1]
+            requestFeed.map((expense, idx) => {
               const at = expense.created_at || expense.expense_date
+              const prev = requestFeed[idx - 1]
               const showDate = !prev || !isSameDay(parseISO(at), parseISO(prev.created_at || prev.expense_date))
               return (
-                <div key={expense.id}>
+                <div key={expense.id} className="space-y-3">
                   {showDate && (
-                    <p className="text-center text-[11px] text-slate-400 my-3">
-                      {format(parseISO(at), 'EEEE, h:mma')}
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                        {format(parseISO(at), 'EEE, d MMM · h:mm a')}
+                      </span>
+                      <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                    </div>
                   )}
-                  <ExpenseChatCard
+                  <RequestCard
                     expense={expense}
                     myId={user!.id}
                     nameOf={nameOf}
@@ -266,42 +320,48 @@ export function GroupDetail() {
         </div>
       )}
 
-      {/* HISTORY — table of all calculated activity */}
+      {/* HISTORY */}
       {tab === 'history' && (
-        <div className="px-4 pt-4 space-y-4">
+        <div className="space-y-5">
           <div className="card overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-              <History className="h-4 w-4 text-slate-400" />
-              <h2 className="font-display font-semibold text-sm">All split requests</h2>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+              <div>
+                <h2 className="font-display font-semibold">Split ledger</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Every request with your live status</p>
+              </div>
+              <span className="text-xs font-medium text-slate-400">{expenses.length} rows</span>
             </div>
             {expenses.length === 0 ? (
-              <p className="p-4 text-sm text-slate-500">No splits yet</p>
+              <p className="p-6 text-sm text-slate-500">Nothing recorded yet</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-50 dark:bg-slate-800/60 text-left text-xs text-slate-500">
-                    <tr>
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Requested by</th>
-                      <th className="px-3 py-2">Note</th>
-                      <th className="px-3 py-2 text-right">Amount</th>
-                      <th className="px-3 py-2">Your status</th>
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-5 py-3 font-medium">Date</th>
+                      <th className="px-3 py-3 font-medium">By</th>
+                      <th className="px-3 py-3 font-medium">Note</th>
+                      <th className="px-3 py-3 font-medium text-right">Amount</th>
+                      <th className="px-5 py-3 font-medium">You</th>
                     </tr>
                   </thead>
                   <tbody>
                     {expenses.map((e) => {
                       const st = expenseStatusForUser(e, user!.id)
                       return (
-                        <tr key={e.id} className="border-t border-slate-100 dark:border-slate-800">
-                          <td className="px-3 py-2.5 whitespace-nowrap text-xs">
-                            {format(parseISO(e.expense_date), 'dd MMM yy')}
+                        <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/80 hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                          <td className="px-5 py-3.5 whitespace-nowrap text-xs text-slate-500">
+                            {format(parseISO(e.expense_date), 'dd MMM yyyy')}
                           </td>
-                          <td className="px-3 py-2.5">{nameOf(e.created_by)}</td>
-                          <td className="px-3 py-2.5 font-medium">{e.title}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(Number(e.amount))}</td>
-                          <td className="px-3 py-2.5">
-                            <StatusPill kind={st.kind} label={st.label} amount={st.amount} />
+                          <td className="px-3 py-3.5">
+                            <div className="flex items-center gap-2">
+                              <Avatar name={nameOf(e.created_by)} size="sm" />
+                              <span className="truncate max-w-[100px]">{nameOf(e.created_by)}</span>
+                            </div>
                           </td>
+                          <td className="px-3 py-3.5 font-medium">{e.title}</td>
+                          <td className="px-3 py-3.5 text-right tabular-nums font-semibold">{formatCurrency(Number(e.amount))}</td>
+                          <td className="px-5 py-3.5"><StatusChip kind={st.kind} amount={st.amount} label={st.label} /></td>
                         </tr>
                       )
                     })}
@@ -312,84 +372,63 @@ export function GroupDetail() {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="font-display font-semibold text-sm">Settle-up payments (month / person)</h2>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+              <h2 className="font-display font-semibold">Settle-up log</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Person-to-person payments (not new splits)</p>
             </div>
             {settlements.length === 0 ? (
-              <p className="p-4 text-sm text-slate-500">No settle-up payments yet</p>
+              <p className="p-6 text-sm text-slate-500">No settle-up payments yet</p>
             ) : (
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                 {settlements.map((s) => (
-                  <div key={s.id} className="px-4 py-3 text-sm flex justify-between gap-3">
-                    <div>
-                      <p>
-                        <span className="font-medium">{nameOf(s.from_user_id)}</span>
-                        {' → '}
-                        <span className="font-medium">{nameOf(s.to_user_id)}</span>
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {format(parseISO(s.settlement_date), 'dd MMM yyyy')}
-                        {s.notes ? ` · ${s.notes}` : ''}
-                      </p>
+                  <li key={s.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex -space-x-2 shrink-0">
+                        <Avatar name={nameOf(s.from_user_id)} size="sm" className="ring-2 ring-white dark:ring-surface-dark-muted" />
+                        <Avatar name={nameOf(s.to_user_id)} size="sm" className="ring-2 ring-white dark:ring-surface-dark-muted" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm truncate">
+                          <span className="font-semibold">{nameOf(s.from_user_id)}</span>
+                          <span className="text-slate-400"> paid </span>
+                          <span className="font-semibold">{nameOf(s.to_user_id)}</span>
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {format(parseISO(s.settlement_date), 'dd MMM yyyy')}
+                          {s.notes ? ` · ${s.notes}` : ''}
+                        </p>
+                      </div>
                     </div>
-                    <span className="font-semibold tabular-nums text-emerald-600">{formatCurrency(Number(s.amount))}</span>
-                  </div>
+                    <span className="font-semibold tabular-nums text-emerald-600 shrink-0">{formatCurrency(Number(s.amount))}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </div>
         </div>
       )}
 
-      <div className="fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-surface-dark/95 backdrop-blur px-4 py-3 sm:static sm:mt-6 sm:rounded-2xl sm:border sm:mx-4">
-        <div className="mx-auto max-w-lg flex gap-3">
-          <button
-            type="button"
-            className="flex-1 rounded-full border-2 border-sky-600 text-sky-700 dark:text-sky-400 font-semibold py-3 text-sm hover:bg-sky-50 dark:hover:bg-sky-950/40 transition"
-            onClick={() => setExpenseOpen(true)}
-          >
-            Split expense
-          </button>
-          <button
-            type="button"
-            className="flex-1 rounded-full bg-sky-600 text-white font-semibold py-3 text-sm hover:bg-sky-700 transition"
-            onClick={() => {
-              setSettlePrefill(null)
-              setSettleOpen(true)
-            }}
-          >
-            Settle up
-          </button>
-        </div>
-      </div>
-
-      <Modal open={expenseOpen} onClose={() => setExpenseOpen(false)} title="Split expense" size="lg">
+      <Modal open={expenseOpen} onClose={() => setExpenseOpen(false)} title="New split" size="lg">
         <GroupExpenseForm
           groupId={group.id}
           groupName={group.name}
           members={members}
-          onDone={() => {
-            setExpenseOpen(false)
-            setTab('chat')
-            load()
-          }}
+          onDone={() => { setExpenseOpen(false); setTab('requests'); load() }}
         />
       </Modal>
 
       <Modal open={settleOpen} onClose={() => setSettleOpen(false)} title="Settle up">
         {suggestions.length > 0 && !settlePrefill && (
-          <div className="mb-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3 text-sm space-y-1">
-            <p className="font-medium text-slate-700 dark:text-slate-200 mb-1">Suggested</p>
+          <div className="mb-4 rounded-2xl border border-brand-100 dark:border-brand-900 bg-brand-50/50 dark:bg-brand-950/30 p-3 space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-brand-700 dark:text-brand-300 mb-2">Suggested</p>
             {suggestions.slice(0, 4).map((s, i) => (
               <button
                 key={i}
                 type="button"
-                className="flex w-full justify-between rounded-lg px-2 py-1.5 hover:bg-white dark:hover:bg-slate-700"
+                className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm hover:bg-white dark:hover:bg-slate-800"
                 onClick={() => setSettlePrefill({ fromId: s.from, toId: s.to, amount: s.amount })}
               >
-                <span>
-                  {nameOf(s.from)} → {nameOf(s.to)}
-                </span>
+                <span>{nameOf(s.from)} → {nameOf(s.to)}</span>
                 <span className="font-semibold">{formatCurrency(s.amount)}</span>
               </button>
             ))}
@@ -400,28 +439,17 @@ export function GroupDetail() {
           groupName={group.name}
           members={members}
           prefill={settlePrefill || undefined}
-          onDone={() => {
-            setSettleOpen(false)
-            setSettlePrefill(null)
-            load()
-          }}
+          onDone={() => { setSettleOpen(false); setSettlePrefill(null); load() }}
         />
       </Modal>
 
-      <Modal
-        open={!!markPaidExpense}
-        onClose={() => setMarkPaidExpense(null)}
-        title={`Mark paid — ${markPaidExpense?.title || ''}`}
-      >
+      <Modal open={!!markPaidExpense} onClose={() => setMarkPaidExpense(null)} title={`Mark paid · ${markPaidExpense?.title || ''}`}>
         {markPaidExpense && (
           <MarkPaidForm
             expense={markPaidExpense}
             members={members}
             groupName={group.name}
-            onDone={() => {
-              setMarkPaidExpense(null)
-              load()
-            }}
+            onDone={() => { setMarkPaidExpense(null); load() }}
           />
         )}
       </Modal>
@@ -432,14 +460,8 @@ export function GroupDetail() {
             person={person}
             expenses={expenses.filter((e) => person.relatedExpenseIds.includes(e.id))}
             myId={user.id}
-            onSettle={() => {
-              openSettleFor(person)
-              setPerson(null)
-            }}
-            onMarkPaid={(e) => {
-              setPerson(null)
-              setMarkPaidExpense(e)
-            }}
+            onSettle={() => { openSettleFor(person); setPerson(null) }}
+            onMarkPaid={(e) => { setPerson(null); setMarkPaidExpense(e) }}
           />
         )}
       </Modal>
@@ -447,84 +469,69 @@ export function GroupDetail() {
   )
 }
 
-function StatusPill({
-  kind,
-  label,
-  amount,
-}: {
-  kind: 'owe' | 'owed' | 'none' | 'settled'
-  label: string
-  amount: number
-}) {
-  const cls =
-    kind === 'owe'
-      ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
-      : kind === 'owed'
-        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-  return (
-    <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium', cls)}>
-      {kind === 'owe' || kind === 'owed' ? formatCurrency(amount) : label}
-    </span>
-  )
-}
-
-function PersonSection({
-  title,
-  people,
-  tone,
-  onSelect,
+function BalanceBlock({
+  title, hint, tone, children,
 }: {
   title: string
-  people: PersonPairBalance[]
+  hint: string
   tone: 'owe' | 'owed' | 'settled'
-  onSelect: (p: PersonPairBalance) => void
+  children: React.ReactNode
 }) {
+  const accent =
+    tone === 'owe' ? 'border-l-rose-500' : tone === 'owed' ? 'border-l-emerald-500' : 'border-l-slate-300 dark:border-l-slate-600'
   return (
-    <section>
-      <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2">{title}</h2>
-      <div className="space-y-1">
-        {people.map((p) => (
-          <button
-            key={p.userId}
-            type="button"
-            onClick={() => onSelect(p)}
-            className="flex w-full items-center gap-3 rounded-xl px-1 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
-          >
-            <Avatar name={p.name} url={p.avatarUrl} />
-            <div className="min-w-0 flex-1">
-              <p className="font-medium truncate">{p.name}</p>
-              <p className="text-xs text-slate-500">
-                {p.unpaidExpenseCount > 0
-                  ? `${p.unpaidExpenseCount} unpaid expense${p.unpaidExpenseCount === 1 ? '' : 's'}`
-                  : tone === 'settled'
-                    ? 'All settled'
-                    : 'Open balance'}
-              </p>
-            </div>
-            <p
-              className={cn(
-                'font-semibold tabular-nums',
-                tone === 'owe' && 'text-rose-600',
-                tone === 'owed' && 'text-emerald-600',
-                tone === 'settled' && 'text-slate-400'
-              )}
-            >
-              {formatCurrency(Math.abs(p.net))}
-            </p>
-          </button>
-        ))}
+    <section className={cn('card overflow-hidden border-l-4', accent)}>
+      <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800">
+        <h2 className="font-display font-semibold">{title}</h2>
+        <p className="text-xs text-slate-500">{hint}</p>
       </div>
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">{children}</div>
     </section>
   )
 }
 
-function ExpenseChatCard({
-  expense,
-  myId,
-  nameOf,
-  members,
-  onMarkPaid,
+function PersonRow({
+  person, tone, onClick,
+}: {
+  person: PersonPairBalance
+  tone: 'owe' | 'owed' | 'settled'
+  onClick: () => void
+}) {
+  return (
+    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 px-5 py-3.5 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition">
+      <Avatar name={person.name} url={person.avatarUrl} />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium truncate">{person.name}</p>
+        <p className="text-xs text-slate-500">
+          {person.unpaidExpenseCount > 0
+            ? `${person.unpaidExpenseCount} open split${person.unpaidExpenseCount === 1 ? '' : 's'}`
+            : tone === 'settled' ? 'Cleared' : 'Balance open'}
+        </p>
+      </div>
+      <p className={cn(
+        'font-display text-lg font-semibold tabular-nums',
+        tone === 'owe' && 'text-rose-600',
+        tone === 'owed' && 'text-emerald-600',
+        tone === 'settled' && 'text-slate-400'
+      )}>
+        {formatCurrency(Math.abs(person.net))}
+      </p>
+    </button>
+  )
+}
+
+function StatusChip({ kind, amount, label }: { kind: 'owe' | 'owed' | 'none' | 'settled'; amount: number; label: string }) {
+  if (kind === 'owe') {
+    return <span className="inline-flex rounded-full bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300">{formatCurrency(amount)} left</span>
+  }
+  if (kind === 'owed') {
+    return <span className="inline-flex rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">Get {formatCurrency(amount)}</span>
+  }
+  return <span className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-500">{kind === 'settled' ? 'Settled' : label}</span>
+}
+
+function RequestCard({
+  expense, myId, nameOf, members, onMarkPaid,
 }: {
   expense: GroupExpense
   myId: string
@@ -533,60 +540,56 @@ function ExpenseChatCard({
   onMarkPaid: () => void
 }) {
   const status = expenseStatusForUser(expense, myId)
-  const creator = expense.created_by
   const parts = expense.expense_participants || []
-  const involved = [
-    ...new Set([
-      ...(expense.expense_payments || []).map((p) => p.user_id),
-      ...parts.map((p) => p.user_id),
-    ]),
-  ]
+  const involved = [...new Set([...(expense.expense_payments || []).map((p) => p.user_id), ...parts.map((p) => p.user_id)])]
   const unpaidPeople = parts.filter((p) => participantRemaining(expense, p.user_id) > 0.01).length
   const totalPeople = parts.length || 1
-  const paidPeople = totalPeople - unpaidPeople
+  const paidPeople = Math.max(0, totalPeople - unpaidPeople)
   const progress = (paidPeople / totalPeople) * 100
+  const creator = expense.created_by
 
   return (
-    <div className="space-y-1">
-      {creator !== myId && (
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Avatar name={nameOf(creator)} size="sm" url={members.find((m) => m.user_id === creator)?.avatarUrl} />
-          <span>{nameOf(creator)}</span>
-        </div>
-      )}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-surface-dark-muted p-4 shadow-sm">
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          Requested for{' '}
-          <span className="font-medium text-slate-900 dark:text-white">&apos;{expense.title}&apos;</span>
-        </p>
-        <p className="mt-2 text-2xl font-semibold tabular-nums">{formatCurrency(Number(expense.amount))}</p>
+    <article className="group relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white dark:bg-surface-dark-muted shadow-soft transition hover:shadow-card hover:border-brand-200 dark:hover:border-brand-800">
+      <div className={cn(
+        'absolute left-0 top-0 bottom-0 w-1',
+        status.kind === 'owe' && 'bg-rose-500',
+        status.kind === 'owed' && 'bg-emerald-500',
+        (status.kind === 'settled' || status.kind === 'none') && 'bg-slate-300 dark:bg-slate-600'
+      )} />
 
-        {status.kind === 'owe' && (
-          <>
-            <div className="mt-3 h-1.5 rounded-full bg-sky-100 dark:bg-sky-950 overflow-hidden">
-              <div className="h-full bg-sky-500 rounded-full" style={{ width: `${progress}%` }} />
+      <div className="p-5 pl-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
+              <Avatar name={nameOf(creator)} size="sm" url={members.find((m) => m.user_id === creator)?.avatarUrl} />
+              <span>{creator === myId ? 'You' : nameOf(creator)} created</span>
+              <span>·</span>
+              <span>{format(parseISO(expense.expense_date), 'd MMM')}</span>
             </div>
-            <p className="mt-1.5 text-xs text-rose-600 font-medium">
-              {formatCurrency(status.amount)} left · {paidPeople} of {totalPeople} paid ·{' '}
-              {format(parseISO(expense.expense_date), 'd MMM')}
-            </p>
-          </>
-        )}
-        {status.kind === 'owed' && (
-          <p className="mt-2 text-sm font-medium text-emerald-600">{status.label}</p>
-        )}
-        {(status.kind === 'none' || status.kind === 'settled') && (
-          <div className="mt-3 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-xs">
-              ✓
-            </span>
-            {status.label}
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Requested for</p>
+            <h3 className="mt-0.5 font-display text-xl font-semibold text-slate-900 dark:text-white truncate">
+              {expense.title}
+            </h3>
           </div>
-        )}
+          <p className="font-display text-2xl font-semibold tabular-nums shrink-0">{formatCurrency(Number(expense.amount))}</p>
+        </div>
 
-        <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-xs mb-1.5">
+            <span className="text-slate-500">{paidPeople}/{totalPeople} paid</span>
+            <StatusChip kind={status.kind} amount={status.amount} label={status.label} />
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+            <div
+              className={cn('h-full rounded-full transition-all', unpaidPeople === 0 ? 'bg-emerald-500' : 'bg-brand-500')}
+              style={{ width: `${Math.min(100, progress)}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex -space-x-2">
-            {involved.slice(0, 6).map((uid) => (
+            {involved.slice(0, 7).map((uid) => (
               <Avatar
                 key={uid}
                 name={nameOf(uid)}
@@ -596,27 +599,23 @@ function ExpenseChatCard({
               />
             ))}
           </div>
-          {unpaidPeople > 0 && (
-            <button
-              type="button"
-              className="text-xs font-semibold text-sky-700 dark:text-sky-400 px-2 py-1 rounded-full hover:bg-sky-50 dark:hover:bg-sky-950/40"
-              onClick={onMarkPaid}
-            >
+          {unpaidPeople > 0 ? (
+            <button type="button" onClick={onMarkPaid} className="btn-primary !rounded-full !py-2 !px-4 !text-xs">
               Mark paid
             </button>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Complete
+            </span>
           )}
         </div>
       </div>
-    </div>
+    </article>
   )
 }
 
 function PersonSheet({
-  person,
-  expenses,
-  myId,
-  onSettle,
-  onMarkPaid,
+  person, expenses, myId, onSettle, onMarkPaid,
 }: {
   person: PersonPairBalance
   expenses: GroupExpense[]
@@ -625,16 +624,14 @@ function PersonSheet({
   onMarkPaid: (e: GroupExpense) => void
 }) {
   return (
-    <div className="space-y-4">
-      <div className="text-center">
+    <div className="space-y-5">
+      <div className="text-center rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-5">
         <Avatar name={person.name} url={person.avatarUrl} size="lg" className="mx-auto" />
-        <p className="mt-3 font-display text-lg font-semibold">{person.name}</p>
-        <p
-          className={cn(
-            'mt-1 text-sm font-semibold',
-            person.net > 0.01 ? 'text-emerald-600' : person.net < -0.01 ? 'text-rose-600' : 'text-slate-400'
-          )}
-        >
+        <p className="mt-3 font-display text-xl font-semibold">{person.name}</p>
+        <p className={cn(
+          'mt-1 text-sm font-semibold',
+          person.net > 0.01 ? 'text-emerald-600' : person.net < -0.01 ? 'text-rose-600' : 'text-slate-400'
+        )}>
           {person.net > 0.01
             ? `Owes you ${formatCurrency(person.net)}`
             : person.net < -0.01
@@ -644,38 +641,26 @@ function PersonSheet({
       </div>
 
       {Math.abs(person.net) > 0.01 && (
-        <button type="button" className="btn-primary w-full !rounded-full" onClick={onSettle}>
-          Settle up
+        <button type="button" className="btn-primary w-full !rounded-2xl" onClick={onSettle}>
+          <HandCoins className="h-4 w-4" /> Settle up with {person.name.split(' ')[0]}
         </button>
       )}
 
       <div>
-        <h3 className="text-sm font-semibold mb-2">Open related splits</h3>
+        <h3 className="text-sm font-semibold mb-2">Open splits together</h3>
         {expenses.length === 0 ? (
-          <p className="text-sm text-slate-500">No open shared expenses</p>
+          <p className="text-sm text-slate-500">No open shared splits</p>
         ) : (
           <ul className="space-y-2">
             {expenses.map((e) => {
               const st = expenseStatusForUser(e, myId)
               return (
-                <li
-                  key={e.id}
-                  className="rounded-xl bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-sm flex justify-between gap-2 items-center"
-                >
+                <li key={e.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 dark:border-slate-800 px-3.5 py-3">
                   <div className="min-w-0">
                     <p className="font-medium truncate">{e.title}</p>
-                    <p
-                      className={cn(
-                        'text-xs',
-                        st.kind === 'owe' && 'text-rose-600',
-                        st.kind === 'owed' && 'text-emerald-600',
-                        (st.kind === 'none' || st.kind === 'settled') && 'text-slate-500'
-                      )}
-                    >
-                      {st.label}
-                    </p>
+                    <StatusChip kind={st.kind} amount={st.amount} label={st.label} />
                   </div>
-                  <button type="button" className="text-xs font-semibold text-sky-700 shrink-0" onClick={() => onMarkPaid(e)}>
+                  <button type="button" className="btn-secondary !rounded-full !py-1.5 !px-3 !text-xs shrink-0" onClick={() => onMarkPaid(e)}>
                     Mark paid
                   </button>
                 </li>

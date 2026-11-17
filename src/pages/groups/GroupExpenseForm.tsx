@@ -258,8 +258,8 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
         <textarea className="input min-h-[60px]" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
-      <button type="submit" className="btn-primary w-full" disabled={saving}>
-        {saving ? <Spinner className="!border-white/30 !border-t-white" /> : 'Save expense'}
+      <button type="submit" className="btn-primary w-full !rounded-2xl" disabled={saving}>
+        {saving ? <Spinner className="!border-white/30 !border-t-white" /> : 'Create split'}
       </button>
     </form>
   )
