@@ -37,24 +37,38 @@ export function Join() {
         else toast.success('Joined group')
         navigate(`/groups/${group.id}`)
       } else if (type === 'tiffin') {
-        const { data: group } = await supabase.from('tiffin_groups').select('id').eq('invite_code', code).maybeSingle()
+        const invite = code.trim().toLowerCase()
+        const { data: group } = await supabase
+          .from('tiffin_groups')
+          .select('id')
+          .eq('invite_code', invite)
+          .maybeSingle()
         if (!group) {
           toast.error('Invalid tiffin invite')
           navigate('/tiffin')
           return
         }
-        const { error } = await supabase.from('tiffin_members').upsert(
-          {
-            tiffin_group_id: group.id,
-            user_id: user.id,
-            role: 'member',
-            is_active: true,
-            left_at: null,
-          },
-          { onConflict: 'tiffin_group_id,user_id' }
-        )
-        if (error) toast.error(error.message)
-        else toast.success('Joined tiffin group')
+        const { error } = await supabase.from('tiffin_members').insert({
+          tiffin_group_id: group.id,
+          user_id: user.id,
+          role: 'member',
+          is_active: true,
+          left_at: null,
+        })
+        if (error && error.code === '23505') {
+          await supabase
+            .from('tiffin_members')
+            .update({ is_active: true, left_at: null })
+            .eq('tiffin_group_id', group.id)
+            .eq('user_id', user.id)
+          toast.success('Already a member')
+        } else if (error) {
+          toast.error(error.message)
+          navigate('/tiffin')
+          return
+        } else {
+          toast.success('Joined tiffin group')
+        }
         navigate(`/tiffin/${group.id}`)
       } else {
         navigate('/')
