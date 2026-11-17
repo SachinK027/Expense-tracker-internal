@@ -4,8 +4,8 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { calculateShares } from '@/lib/calculations'
 import { syncFrontedPayment } from '@/lib/personalSync'
-import { todayISO, formatCurrency, roundMoney } from '@/lib/utils'
-import type { GroupMember, SplitType } from '@/types/database'
+import { todayISO, formatCurrency } from '@/lib/utils'
+import type { GroupMember } from '@/types/database'
 import { Spinner } from '@/components/ui/Loading'
 
 const CATEGORIES = ['general', 'food', 'travel', 'rent', 'utilities', 'entertainment', 'other']
@@ -24,23 +24,23 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
   const [category, setCategory] = useState('general')
   const [date, setDate] = useState(todayISO())
   const [notes, setNotes] = useState('')
-  const [splitType, setSplitType] = useState<SplitType>('equal')
-  const [payerIds, setPayerIds] = useState<string[]>(user ? [user.id] : [])
   const [participantIds, setParticipantIds] = useState<string[]>(members.map((m) => m.user_id))
-  const [values, setValues] = useState<Record<string, string>>({})
-  const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
 
   const total = Number(amount) || 0
+  const preview = useMemo(
+    () => calculateShares(total, 'equal', participantIds.map((id) => ({ userId: id }))),
+    [total, participantIds]
+  )
 
-  const preview = useMemo(() => {
-    const parts = participantIds.map((id) => ({ userId: id, value: Number(values[id] || 0) }))
-    return calculateShares(total, splitType, parts)
-  }, [total, splitType, participantIds, values])
-
-  const toggle = (list: string[], id: string, set: (v: string[]) => void) => {
-    set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
+  const toggle = (id: string) => {
+    setParticipantIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]))
   }
+
+  const selectAll = () => setParticipantIds(members.map((m) => m.user_id))
+  const clearAll = () => setParticipantIds([])
+
+  const label = (m: GroupMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -49,44 +49,18 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
       toast.error('Title and amount required')
       return
     }
-    if (!payerIds.length || !participantIds.length) {
-      toast.error('Select payers and participants')
+    if (!participantIds.length) {
+      toast.error('Select who shares this split')
       return
     }
 
-    let payments: { user_id: string; amount: number }[]
-    if (payerIds.length === 1) {
-      payments = [{ user_id: payerIds[0], amount: total }]
-    } else {
-      payments = payerIds.map((id) => ({
-        user_id: id,
-        amount: roundMoney(Number(payerAmounts[id] || 0)),
-      }))
-      const paidSum = roundMoney(payments.reduce((s, p) => s + p.amount, 0))
-      if (Math.abs(paidSum - total) > 0.05) {
-        toast.error(`Payer amounts must sum to ${formatCurrency(total)}`)
-        return
-      }
-    }
-
+    // You created the split → you paid
+    const payments = [{ user_id: user.id, amount: total }]
     const shares = calculateShares(
       total,
-      splitType,
-      participantIds.map((id) => ({ userId: id, value: Number(values[id] || (splitType === 'equal' ? 1 : 0)) }))
+      'equal',
+      participantIds.map((id) => ({ userId: id }))
     )
-    if (splitType !== 'equal') {
-      const shareSum = roundMoney(shares.reduce((s, x) => s + x.shareAmount, 0))
-      if (splitType === 'percentage') {
-        const pct = participantIds.reduce((s, id) => s + Number(values[id] || 0), 0)
-        if (Math.abs(pct - 100) > 0.1) {
-          toast.error('Percentages must sum to 100')
-          return
-        }
-      } else if (splitType === 'exact' && Math.abs(shareSum - total) > 0.05) {
-        toast.error(`Shares must sum to ${formatCurrency(total)}`)
-        return
-      }
-    }
 
     setSaving(true)
     const { data: exp, error } = await supabase
@@ -98,7 +72,7 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
         category,
         expense_date: date,
         notes: notes.trim() || null,
-        split_type: splitType,
+        split_type: 'equal',
         created_by: user.id,
       })
       .select()
@@ -114,21 +88,22 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
       .from('expense_payments')
       .insert(payments.map((p) => ({ expense_id: exp.id, user_id: p.user_id, amount: p.amount })))
       .select('id, user_id, amount')
+
     const { error: partErr } = await supabase.from('expense_participants').insert(
       shares.map((s) => ({
         expense_id: exp.id,
         user_id: s.userId,
         share_amount: s.shareAmount,
-        share_value: Number(values[s.userId] || null),
+        share_value: null,
       }))
     )
+
     if (payErr || partErr) {
       setSaving(false)
       toast.error(payErr?.message || partErr?.message || 'Error saving splits')
       return
     }
 
-    // Sync personal expense for whoever fronted cash
     try {
       await Promise.all(
         (payRows || []).map((p) =>
@@ -147,104 +122,84 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
     }
 
     setSaving(false)
-    toast.success('Split request created')
+    toast.success('Split created')
     onDone()
   }
-
-  const label = (m: GroupMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
-        <label className="label">Requested for (note)</label>
+        <label className="label">For</label>
         <input
           className="input"
           required
-          placeholder="movie tickets / gathiya / settlement / lunch…"
+          placeholder="movie tickets, lunch, settlement…"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
-        <p className="mt-1 text-[11px] text-slate-400">This is just a note — same as GPay “Requested for …”.</p>
       </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Amount (₹)</label>
-          <input type="number" step="0.01" min="0.01" className="input" required value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            className="input"
+            required
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
         </div>
         <div>
           <label className="label">Date</label>
           <input type="date" className="input" required value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Category</label>
-          <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label">Split type</label>
-          <select className="input" value={splitType} onChange={(e) => setSplitType(e.target.value as SplitType)}>
-            <option value="equal">Equal</option>
-            <option value="exact">Exact amounts</option>
-            <option value="percentage">Percentage</option>
-            <option value="shares">Shares</option>
-          </select>
-        </div>
-      </div>
 
       <div>
-        <label className="label">Who paid?</label>
-        <div className="space-y-2">
-          {members.map((m) => (
-            <label key={m.user_id} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={payerIds.includes(m.user_id)}
-                onChange={() => toggle(payerIds, m.user_id, setPayerIds)}
-              />
-              <span className="flex-1">{label(m)}</span>
-              {payerIds.length > 1 && payerIds.includes(m.user_id) && (
-                <input
-                  type="number"
-                  step="0.01"
-                  className="input !w-28"
-                  placeholder="Paid"
-                  value={payerAmounts[m.user_id] || ''}
-                  onChange={(e) => setPayerAmounts({ ...payerAmounts, [m.user_id]: e.target.value })}
-                />
-              )}
-            </label>
+        <label className="label">Category</label>
+        <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
-        </div>
+        </select>
       </div>
 
+      <p className="rounded-xl bg-brand-50 dark:bg-brand-950/40 px-3 py-2 text-xs text-brand-800 dark:text-brand-200">
+        You are recording this split — <strong>you paid</strong> ₹{total > 0 ? total.toFixed(2) : '…'}.
+      </p>
+
       <div>
-        <label className="label">Split among</label>
-        <div className="space-y-2">
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="label !mb-0">Split among</label>
+          <div className="flex gap-2 text-xs font-semibold">
+            <button type="button" className="text-brand-700 dark:text-brand-300" onClick={selectAll}>
+              Select all
+            </button>
+            <span className="text-slate-300">|</span>
+            <button type="button" className="text-slate-500" onClick={clearAll}>
+              Clear
+            </button>
+          </div>
+        </div>
+        <div className="max-h-52 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 p-2">
           {members.map((m) => (
-            <label key={m.user_id} className="flex items-center gap-2 text-sm">
+            <label
+              key={m.user_id}
+              className="flex items-center gap-2 rounded-xl px-2 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50"
+            >
               <input
                 type="checkbox"
                 checked={participantIds.includes(m.user_id)}
-                onChange={() => toggle(participantIds, m.user_id, setParticipantIds)}
+                onChange={() => toggle(m.user_id)}
               />
-              <span className="flex-1">{label(m)}</span>
-              {splitType !== 'equal' && participantIds.includes(m.user_id) && (
-                <input
-                  type="number"
-                  step="0.01"
-                  className="input !w-28"
-                  placeholder={splitType === 'percentage' ? '%' : splitType === 'shares' ? 'shares' : '₹'}
-                  value={values[m.user_id] || ''}
-                  onChange={(e) => setValues({ ...values, [m.user_id]: e.target.value })}
-                />
-              )}
-              {splitType === 'equal' && participantIds.includes(m.user_id) && total > 0 && (
-                <span className="text-xs text-slate-500 w-24 text-right">
+              <span className="flex-1">{label(m)}{m.user_id === user?.id ? ' (you)' : ''}</span>
+              {participantIds.includes(m.user_id) && total > 0 && (
+                <span className="text-xs tabular-nums text-slate-500">
                   {formatCurrency(preview.find((p) => p.userId === m.user_id)?.shareAmount || 0)}
                 </span>
               )}
@@ -254,7 +209,7 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
       </div>
 
       <div>
-        <label className="label">Notes</label>
+        <label className="label">Notes (optional)</label>
         <textarea className="input min-h-[60px]" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 

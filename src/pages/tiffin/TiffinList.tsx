@@ -82,9 +82,9 @@ export function TiffinList() {
                 <UtensilsCrossed className="h-6 w-6" />
               </div>
               <h2 className="mt-4 font-display text-lg font-semibold">{g.name}</h2>
-              <p className="mt-1 text-sm text-slate-500 line-clamp-2">{g.description || 'Meal tracking'}</p>
-              <p className="mt-3 text-xs text-slate-400">
-                Lunch ₹{g.lunch_price} · Dinner ₹{g.dinner_price}
+              <p className="mt-1 text-sm text-slate-500 line-clamp-2">{g.description || 'Lunch & dinner tracking'}</p>
+              <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+                Code {g.invite_code}
               </p>
             </Link>
           ))}
