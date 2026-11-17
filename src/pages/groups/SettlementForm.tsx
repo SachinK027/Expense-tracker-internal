@@ -2,18 +2,20 @@ import { useEffect, useState, type FormEvent } from 'react'
 import toast from 'react-hot-toast'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { syncTransfer } from '@/lib/personalSync'
 import { todayISO } from '@/lib/utils'
 import type { GroupMember } from '@/types/database'
 import { Spinner } from '@/components/ui/Loading'
 
 interface Props {
   groupId: string
+  groupName?: string
   members: GroupMember[]
   prefill?: { fromId?: string; toId?: string; amount?: number } | null
   onDone: () => void
 }
 
-export function SettlementForm({ groupId, members, prefill, onDone }: Props) {
+export function SettlementForm({ groupId, groupName, members, prefill, onDone }: Props) {
   const { user } = useAuth()
   const [fromId, setFromId] = useState(prefill?.fromId || user?.id || '')
   const [toId, setToId] = useState(prefill?.toId || '')
@@ -40,21 +42,40 @@ export function SettlementForm({ groupId, members, prefill, onDone }: Props) {
       return
     }
     setSaving(true)
-    const { error } = await supabase.from('settlements').insert({
-      group_id: groupId,
-      from_user_id: fromId,
-      to_user_id: toId,
-      amount: amt,
-      settlement_date: date,
-      notes: notes.trim() || null,
-      created_by: user.id,
-    })
-    setSaving(false)
-    if (error) toast.error(error.message)
-    else {
-      toast.success('Settlement recorded')
-      onDone()
+    const { data, error } = await supabase
+      .from('settlements')
+      .insert({
+        group_id: groupId,
+        from_user_id: fromId,
+        to_user_id: toId,
+        amount: amt,
+        settlement_date: date,
+        notes: notes.trim() || null,
+        created_by: user.id,
+      })
+      .select()
+      .single()
+    if (error || !data) {
+      setSaving(false)
+      toast.error(error?.message || 'Failed')
+      return
     }
+    try {
+      await syncTransfer({
+        fromUserId: fromId,
+        toUserId: toId,
+        amount: amt,
+        date,
+        note: `${groupName || 'Group'}: settle up${notes.trim() ? ` — ${notes.trim()}` : ''}`,
+        sourceType: 'group_settlement',
+        sourceId: data.id,
+      })
+    } catch (err) {
+      console.error(err)
+    }
+    setSaving(false)
+    toast.success('Settlement recorded')
+    onDone()
   }
 
   return (

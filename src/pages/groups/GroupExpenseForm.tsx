@@ -3,6 +3,7 @@ import toast from 'react-hot-toast'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { calculateShares } from '@/lib/calculations'
+import { syncFrontedPayment } from '@/lib/personalSync'
 import { todayISO, formatCurrency, roundMoney } from '@/lib/utils'
 import type { GroupMember, SplitType } from '@/types/database'
 import { Spinner } from '@/components/ui/Loading'
@@ -11,11 +12,12 @@ const CATEGORIES = ['general', 'food', 'travel', 'rent', 'utilities', 'entertain
 
 interface Props {
   groupId: string
+  groupName: string
   members: GroupMember[]
   onDone: () => void
 }
 
-export function GroupExpenseForm({ groupId, members, onDone }: Props) {
+export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props) {
   const { user } = useAuth()
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
@@ -108,9 +110,10 @@ export function GroupExpenseForm({ groupId, members, onDone }: Props) {
       return
     }
 
-    const { error: payErr } = await supabase.from('expense_payments').insert(
-      payments.map((p) => ({ expense_id: exp.id, user_id: p.user_id, amount: p.amount }))
-    )
+    const { data: payRows, error: payErr } = await supabase
+      .from('expense_payments')
+      .insert(payments.map((p) => ({ expense_id: exp.id, user_id: p.user_id, amount: p.amount })))
+      .select('id, user_id, amount')
     const { error: partErr } = await supabase.from('expense_participants').insert(
       shares.map((s) => ({
         expense_id: exp.id,
@@ -119,12 +122,33 @@ export function GroupExpenseForm({ groupId, members, onDone }: Props) {
         share_value: Number(values[s.userId] || null),
       }))
     )
-    setSaving(false)
-    if (payErr || partErr) toast.error(payErr?.message || partErr?.message || 'Error saving splits')
-    else {
-      toast.success('Expense added')
-      onDone()
+    if (payErr || partErr) {
+      setSaving(false)
+      toast.error(payErr?.message || partErr?.message || 'Error saving splits')
+      return
     }
+
+    // Sync personal expense for whoever fronted cash
+    try {
+      await Promise.all(
+        (payRows || []).map((p) =>
+          syncFrontedPayment({
+            userId: p.user_id,
+            amount: Number(p.amount),
+            date,
+            groupName,
+            title: title.trim(),
+            paymentId: p.id,
+          })
+        )
+      )
+    } catch (err) {
+      console.error(err)
+    }
+
+    setSaving(false)
+    toast.success('Split request created')
+    onDone()
   }
 
   const label = (m: GroupMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
@@ -132,8 +156,15 @@ export function GroupExpenseForm({ groupId, members, onDone }: Props) {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
-        <label className="label">Title</label>
-        <input className="input" required value={title} onChange={(e) => setTitle(e.target.value)} />
+        <label className="label">Requested for (note)</label>
+        <input
+          className="input"
+          required
+          placeholder="movie tickets / gathiya / settlement / lunch…"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+        <p className="mt-1 text-[11px] text-slate-400">This is just a note — same as GPay “Requested for …”.</p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>

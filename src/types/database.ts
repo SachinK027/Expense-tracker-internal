@@ -35,6 +35,8 @@ export interface PersonalTransaction {
   transaction_date: string
   payment_method: string
   notes: string | null
+  source_type?: string | null
+  source_id?: string | null
   created_at: string
   updated_at: string
   expense_categories?: ExpenseCategory | null
@@ -98,6 +100,20 @@ export interface GroupExpense {
   updated_at: string
   expense_payments?: ExpensePayment[]
   expense_participants?: ExpenseParticipant[]
+  expense_repayments?: ExpenseRepayment[]
+}
+
+export interface ExpenseRepayment {
+  id: string
+  expense_id: string
+  group_id: string
+  from_user_id: string
+  to_user_id: string
+  amount: number
+  payment_date: string
+  notes: string | null
+  created_by: string
+  created_at: string
 }
 
 export interface ExpensePayment {
