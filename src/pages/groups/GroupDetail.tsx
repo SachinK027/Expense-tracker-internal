@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, Copy, MessageSquare, History, Users, Plus, HandCoins, CheckCircle2, IndianRupee,
+  ArrowLeft, Copy, MessageSquare, History, Users, Plus, HandCoins, CheckCircle2, IndianRupee, Pencil,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, parseISO, isSameDay } from 'date-fns'
@@ -36,6 +36,7 @@ export function GroupDetail() {
   const [settlements, setSettlements] = useState<Settlement[]>([])
   const [tab, setTab] = useState<MainTab>('balances')
   const [expenseOpen, setExpenseOpen] = useState(false)
+  const [editingExpense, setEditingExpense] = useState<GroupExpense | null>(null)
   const [settleOpen, setSettleOpen] = useState(false)
   const [markPaidExpense, setMarkPaidExpense] = useState<GroupExpense | null>(null)
   const [person, setPerson] = useState<PersonPairBalance | null>(null)
@@ -312,6 +313,7 @@ export function GroupDetail() {
                     nameOf={nameOf}
                     members={memberMeta}
                     onMarkPaid={() => setMarkPaidExpense(expense)}
+                    onEdit={() => setEditingExpense(expense)}
                   />
                 </div>
               )
@@ -347,6 +349,7 @@ export function GroupDetail() {
                   </thead>
                   <tbody>
                     {expenses.map((e) => {
+                      const involved = isInvolvedInExpense(e, user!.id)
                       const st = expenseStatusForUser(e, user!.id)
                       return (
                         <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/80 hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
@@ -360,8 +363,16 @@ export function GroupDetail() {
                             </div>
                           </td>
                           <td className="px-3 py-3.5 font-medium">{e.title}</td>
-                          <td className="px-3 py-3.5 text-right tabular-nums font-semibold">{formatCurrency(Number(e.amount))}</td>
-                          <td className="px-5 py-3.5"><StatusChip kind={st.kind} amount={st.amount} label={st.label} /></td>
+                          <td className="px-3 py-3.5 text-right tabular-nums font-semibold">
+                            {involved ? formatCurrency(Number(e.amount)) : '—'}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            {involved ? (
+                              <StatusChip kind={st.kind} amount={st.amount} label={st.label} />
+                            ) : (
+                              <span className="text-xs text-slate-400">Not in split</span>
+                            )}
+                          </td>
                         </tr>
                       )
                     })}
@@ -380,40 +391,52 @@ export function GroupDetail() {
               <p className="p-6 text-sm text-slate-500">No settle-up payments yet</p>
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                {settlements.map((s) => (
-                  <li key={s.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex -space-x-2 shrink-0">
-                        <Avatar name={nameOf(s.from_user_id)} size="sm" className="ring-2 ring-white dark:ring-surface-dark-muted" />
-                        <Avatar name={nameOf(s.to_user_id)} size="sm" className="ring-2 ring-white dark:ring-surface-dark-muted" />
+                {settlements.map((s) => {
+                  const mine = user?.id === s.from_user_id || user?.id === s.to_user_id
+                  return (
+                    <li key={s.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex -space-x-2 shrink-0">
+                          <Avatar name={nameOf(s.from_user_id)} size="sm" className="ring-2 ring-white dark:ring-surface-dark-muted" />
+                          <Avatar name={nameOf(s.to_user_id)} size="sm" className="ring-2 ring-white dark:ring-surface-dark-muted" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">
+                            <span className="font-semibold">{nameOf(s.from_user_id)}</span>
+                            <span className="text-slate-400"> paid </span>
+                            <span className="font-semibold">{nameOf(s.to_user_id)}</span>
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {format(parseISO(s.settlement_date), 'dd MMM yyyy')}
+                            {s.notes ? ` · ${s.notes}` : ''}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm truncate">
-                          <span className="font-semibold">{nameOf(s.from_user_id)}</span>
-                          <span className="text-slate-400"> paid </span>
-                          <span className="font-semibold">{nameOf(s.to_user_id)}</span>
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {format(parseISO(s.settlement_date), 'dd MMM yyyy')}
-                          {s.notes ? ` · ${s.notes}` : ''}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="font-semibold tabular-nums text-emerald-600 shrink-0">{formatCurrency(Number(s.amount))}</span>
-                  </li>
-                ))}
+                      <span className="font-semibold tabular-nums text-emerald-600 shrink-0">
+                        {mine ? formatCurrency(Number(s.amount)) : '—'}
+                      </span>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </div>
         </div>
       )}
 
-      <Modal open={expenseOpen} onClose={() => setExpenseOpen(false)} title="New split" size="lg">
+      <Modal
+        open={expenseOpen || !!editingExpense}
+        onClose={() => { setExpenseOpen(false); setEditingExpense(null) }}
+        title={editingExpense ? 'Edit split' : 'New split'}
+        size="lg"
+      >
         <GroupExpenseForm
+          key={editingExpense?.id || 'new'}
           groupId={group.id}
           groupName={group.name}
           members={members}
-          onDone={() => { setExpenseOpen(false); setTab('requests'); load() }}
+          initial={editingExpense}
+          onDone={() => { setExpenseOpen(false); setEditingExpense(null); setTab('requests'); load() }}
         />
       </Modal>
 
@@ -520,6 +543,13 @@ function PersonRow({
   )
 }
 
+function isInvolvedInExpense(expense: GroupExpense, userId: string) {
+  return (
+    (expense.expense_participants || []).some((p) => p.user_id === userId) ||
+    (expense.expense_payments || []).some((p) => p.user_id === userId)
+  )
+}
+
 function StatusChip({ kind, amount, label }: { kind: 'owe' | 'owed' | 'none' | 'settled'; amount: number; label: string }) {
   if (kind === 'owe') {
     return <span className="inline-flex rounded-full bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300">{formatCurrency(amount)} left</span>
@@ -531,17 +561,20 @@ function StatusChip({ kind, amount, label }: { kind: 'owe' | 'owed' | 'none' | '
 }
 
 function RequestCard({
-  expense, myId, nameOf, members, onMarkPaid,
+  expense, myId, nameOf, members, onMarkPaid, onEdit,
 }: {
   expense: GroupExpense
   myId: string
   nameOf: (id: string) => string
   members: { user_id: string; name: string; avatarUrl?: string | null }[]
   onMarkPaid: () => void
+  onEdit: () => void
 }) {
   const status = expenseStatusForUser(expense, myId)
   const parts = expense.expense_participants || []
-  const involved = [...new Set([...(expense.expense_payments || []).map((p) => p.user_id), ...parts.map((p) => p.user_id)])]
+  const involvedIds = [...new Set([...(expense.expense_payments || []).map((p) => p.user_id), ...parts.map((p) => p.user_id)])]
+  const iAmIn = involvedIds.includes(myId)
+  const canEdit = iAmIn || expense.created_by === myId
   const unpaidPeople = parts.filter((p) => participantRemaining(expense, p.user_id) > 0.01).length
   const totalPeople = parts.length || 1
   const paidPeople = Math.max(0, totalPeople - unpaidPeople)
@@ -552,9 +585,10 @@ function RequestCard({
     <article className="group relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white dark:bg-surface-dark-muted shadow-soft transition hover:shadow-card hover:border-brand-200 dark:hover:border-brand-800">
       <div className={cn(
         'absolute left-0 top-0 bottom-0 w-1',
-        status.kind === 'owe' && 'bg-rose-500',
-        status.kind === 'owed' && 'bg-emerald-500',
-        (status.kind === 'settled' || status.kind === 'none') && 'bg-slate-300 dark:bg-slate-600'
+        !iAmIn && 'bg-slate-300 dark:bg-slate-600',
+        iAmIn && status.kind === 'owe' && 'bg-rose-500',
+        iAmIn && status.kind === 'owed' && 'bg-emerald-500',
+        iAmIn && (status.kind === 'settled' || status.kind === 'none') && 'bg-slate-300 dark:bg-slate-600'
       )} />
 
       <div className="p-5 pl-6">
@@ -570,26 +604,35 @@ function RequestCard({
             <h3 className="mt-0.5 font-display text-xl font-semibold text-slate-900 dark:text-white truncate">
               {expense.title}
             </h3>
+            {!iAmIn && (
+              <p className="mt-1 text-xs text-slate-400">You are not in this split · {totalPeople} people</p>
+            )}
           </div>
-          <p className="font-display text-2xl font-semibold tabular-nums shrink-0">{formatCurrency(Number(expense.amount))}</p>
+          {iAmIn ? (
+            <p className="font-display text-2xl font-semibold tabular-nums shrink-0">{formatCurrency(Number(expense.amount))}</p>
+          ) : (
+            <p className="text-sm font-medium text-slate-400 shrink-0">Hidden</p>
+          )}
         </div>
 
-        <div className="mt-4">
-          <div className="flex items-center justify-between text-xs mb-1.5">
-            <span className="text-slate-500">{paidPeople}/{totalPeople} paid</span>
-            <StatusChip kind={status.kind} amount={status.amount} label={status.label} />
+        {iAmIn && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="text-slate-500">{paidPeople}/{totalPeople} paid</span>
+              <StatusChip kind={status.kind} amount={status.amount} label={status.label} />
+            </div>
+            <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+              <div
+                className={cn('h-full rounded-full transition-all', unpaidPeople === 0 ? 'bg-emerald-500' : 'bg-brand-500')}
+                style={{ width: `${Math.min(100, progress)}%` }}
+              />
+            </div>
           </div>
-          <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-            <div
-              className={cn('h-full rounded-full transition-all', unpaidPeople === 0 ? 'bg-emerald-500' : 'bg-brand-500')}
-              style={{ width: `${Math.min(100, progress)}%` }}
-            />
-          </div>
-        </div>
+        )}
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex -space-x-2">
-            {involved.slice(0, 7).map((uid) => (
+            {involvedIds.slice(0, 7).map((uid) => (
               <Avatar
                 key={uid}
                 name={nameOf(uid)}
@@ -599,15 +642,22 @@ function RequestCard({
               />
             ))}
           </div>
-          {unpaidPeople > 0 ? (
-            <button type="button" onClick={onMarkPaid} className="btn-primary !rounded-full !py-2 !px-4 !text-xs">
-              Mark paid
-            </button>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Complete
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {canEdit && (
+              <button type="button" onClick={onEdit} className="btn-secondary !rounded-full !py-2 !px-3 !text-xs">
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </button>
+            )}
+            {iAmIn && unpaidPeople > 0 ? (
+              <button type="button" onClick={onMarkPaid} className="btn-primary !rounded-full !py-2 !px-4 !text-xs">
+                Mark paid
+              </button>
+            ) : iAmIn ? (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Complete
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
     </article>

@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { calculateShares } from '@/lib/calculations'
 import { syncFrontedPayment } from '@/lib/personalSync'
 import { todayISO, formatCurrency } from '@/lib/utils'
-import type { GroupMember } from '@/types/database'
+import type { GroupExpense, GroupMember } from '@/types/database'
 import { Spinner } from '@/components/ui/Loading'
 
 const CATEGORIES = ['general', 'food', 'travel', 'rent', 'utilities', 'entertainment', 'other']
@@ -14,17 +14,23 @@ interface Props {
   groupId: string
   groupName: string
   members: GroupMember[]
+  initial?: GroupExpense | null
   onDone: () => void
 }
 
-export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props) {
+export function GroupExpenseForm({ groupId, groupName, members, initial, onDone }: Props) {
   const { user } = useAuth()
-  const [title, setTitle] = useState('')
-  const [amount, setAmount] = useState('')
-  const [category, setCategory] = useState('general')
-  const [date, setDate] = useState(todayISO())
-  const [notes, setNotes] = useState('')
-  const [participantIds, setParticipantIds] = useState<string[]>(members.map((m) => m.user_id))
+  const isEdit = Boolean(initial?.id)
+  const hasRepayments = (initial?.expense_repayments || []).length > 0
+
+  const [title, setTitle] = useState(initial?.title || '')
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [category, setCategory] = useState(initial?.category || 'general')
+  const [date, setDate] = useState(initial?.expense_date || todayISO())
+  const [notes, setNotes] = useState(initial?.notes || '')
+  const [participantIds, setParticipantIds] = useState<string[]>(
+    initial?.expense_participants?.map((p) => p.user_id) || members.map((m) => m.user_id)
+  )
   const [saving, setSaving] = useState(false)
 
   const total = Number(amount) || 0
@@ -34,11 +40,18 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
   )
 
   const toggle = (id: string) => {
+    if (hasRepayments) return
     setParticipantIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]))
   }
 
-  const selectAll = () => setParticipantIds(members.map((m) => m.user_id))
-  const clearAll = () => setParticipantIds([])
+  const selectAll = () => {
+    if (hasRepayments) return
+    setParticipantIds(members.map((m) => m.user_id))
+  }
+  const clearAll = () => {
+    if (hasRepayments) return
+    setParticipantIds([])
+  }
 
   const label = (m: GroupMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
 
@@ -54,7 +67,92 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
       return
     }
 
-    // You created the split → you paid
+    setSaving(true)
+
+    if (isEdit && initial) {
+      // Always safe to update metadata
+      const meta = {
+        title: title.trim(),
+        category,
+        expense_date: date,
+        notes: notes.trim() || null,
+      }
+
+      if (hasRepayments) {
+        const { error } = await supabase.from('group_expenses').update(meta).eq('id', initial.id)
+        setSaving(false)
+        if (error) toast.error(error.message)
+        else {
+          toast.success('Split updated (amount locked — payments already marked)')
+          onDone()
+        }
+        return
+      }
+
+      const shares = calculateShares(
+        total,
+        'equal',
+        participantIds.map((id) => ({ userId: id }))
+      )
+      const payerId = initial.expense_payments?.[0]?.user_id || initial.created_by || user.id
+
+      const { error: upErr } = await supabase
+        .from('group_expenses')
+        .update({ ...meta, amount: total, split_type: 'equal' })
+        .eq('id', initial.id)
+      if (upErr) {
+        setSaving(false)
+        toast.error(upErr.message)
+        return
+      }
+
+      await supabase.from('expense_participants').delete().eq('expense_id', initial.id)
+      await supabase.from('expense_payments').delete().eq('expense_id', initial.id)
+
+      const { data: payRows, error: payErr } = await supabase
+        .from('expense_payments')
+        .insert([{ expense_id: initial.id, user_id: payerId, amount: total }])
+        .select('id, user_id, amount')
+
+      const { error: partErr } = await supabase.from('expense_participants').insert(
+        shares.map((s) => ({
+          expense_id: initial.id,
+          user_id: s.userId,
+          share_amount: s.shareAmount,
+          share_value: null,
+        }))
+      )
+
+      if (payErr || partErr) {
+        setSaving(false)
+        toast.error(payErr?.message || partErr?.message || 'Error updating splits')
+        return
+      }
+
+      try {
+        await Promise.all(
+          (payRows || []).map((p) =>
+            syncFrontedPayment({
+              userId: p.user_id,
+              amount: Number(p.amount),
+              date,
+              groupName,
+              title: title.trim(),
+              paymentId: p.id,
+            })
+          )
+        )
+      } catch (err) {
+        console.error(err)
+      }
+
+      setSaving(false)
+      toast.success('Split updated')
+      onDone()
+      return
+    }
+
+    // Create
     const payments = [{ user_id: user.id, amount: total }]
     const shares = calculateShares(
       total,
@@ -62,7 +160,6 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
       participantIds.map((id) => ({ userId: id }))
     )
 
-    setSaving(true)
     const { data: exp, error } = await supabase
       .from('group_expenses')
       .insert({
@@ -148,6 +245,7 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
             min="0.01"
             className="input"
             required
+            disabled={hasRepayments}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -169,22 +267,31 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
         </select>
       </div>
 
-      <p className="rounded-xl bg-brand-50 dark:bg-brand-950/40 px-3 py-2 text-xs text-brand-800 dark:text-brand-200">
-        You are recording this split — <strong>you paid</strong> ₹{total > 0 ? total.toFixed(2) : '…'}.
-      </p>
+      {!isEdit && (
+        <p className="rounded-xl bg-brand-50 dark:bg-brand-950/40 px-3 py-2 text-xs text-brand-800 dark:text-brand-200">
+          You are recording this split — <strong>you paid</strong> ₹{total > 0 ? total.toFixed(2) : '…'}.
+        </p>
+      )}
+      {hasRepayments && (
+        <p className="rounded-xl bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          Some people already marked paid — amount and members are locked. You can still edit title, date, notes.
+        </p>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="label !mb-0">Split among</label>
-          <div className="flex gap-2 text-xs font-semibold">
-            <button type="button" className="text-brand-700 dark:text-brand-300" onClick={selectAll}>
-              Select all
-            </button>
-            <span className="text-slate-300">|</span>
-            <button type="button" className="text-slate-500" onClick={clearAll}>
-              Clear
-            </button>
-          </div>
+          {!hasRepayments && (
+            <div className="flex gap-2 text-xs font-semibold">
+              <button type="button" className="text-brand-700 dark:text-brand-300" onClick={selectAll}>
+                Select all
+              </button>
+              <span className="text-slate-300">|</span>
+              <button type="button" className="text-slate-500" onClick={clearAll}>
+                Clear
+              </button>
+            </div>
+          )}
         </div>
         <div className="max-h-52 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 p-2">
           {members.map((m) => (
@@ -195,9 +302,13 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
               <input
                 type="checkbox"
                 checked={participantIds.includes(m.user_id)}
+                disabled={hasRepayments}
                 onChange={() => toggle(m.user_id)}
               />
-              <span className="flex-1">{label(m)}{m.user_id === user?.id ? ' (you)' : ''}</span>
+              <span className="flex-1">
+                {label(m)}
+                {m.user_id === user?.id ? ' (you)' : ''}
+              </span>
               {participantIds.includes(m.user_id) && total > 0 && (
                 <span className="text-xs tabular-nums text-slate-500">
                   {formatCurrency(preview.find((p) => p.userId === m.user_id)?.shareAmount || 0)}
@@ -214,7 +325,7 @@ export function GroupExpenseForm({ groupId, groupName, members, onDone }: Props)
       </div>
 
       <button type="submit" className="btn-primary w-full !rounded-2xl" disabled={saving}>
-        {saving ? <Spinner className="!border-white/30 !border-t-white" /> : 'Create split'}
+        {saving ? <Spinner className="!border-white/30 !border-t-white" /> : isEdit ? 'Save changes' : 'Create split'}
       </button>
     </form>
   )

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, Copy, Plus, Users, HandCoins, UtensilsCrossed, History, IndianRupee, CheckCircle2,
+  ArrowLeft, Copy, Plus, Users, HandCoins, UtensilsCrossed, History, IndianRupee, CheckCircle2, Pencil,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, parseISO } from 'date-fns'
@@ -29,6 +29,7 @@ export function TiffinDetail() {
   const [settlements, setSettlements] = useState<TiffinSettlement[]>([])
   const [tab, setTab] = useState<Tab>('balances')
   const [mealOpen, setMealOpen] = useState(false)
+  const [editingMeal, setEditingMeal] = useState<TiffinMeal | null>(null)
   const [settleOpen, setSettleOpen] = useState(false)
   const [mealType, setMealType] = useState<'lunch' | 'dinner'>('lunch')
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'))
@@ -85,6 +86,20 @@ export function TiffinDetail() {
   const myId = user?.id || ''
   const youOwe = sumIOwe(balances, myId)
   const owedToYou = sumOwedToMe(balances, myId)
+  const mySuggestions = useMemo(
+    () => suggestions.filter((s) => s.from === myId || s.to === myId),
+    [suggestions, myId]
+  )
+
+  const isInvolvedInMeal = (meal: TiffinMeal) => {
+    if (!myId) return false
+    if (meal.created_by === myId) return true
+    if ((meal.tiffin_attendance || []).some((a) => a.user_id === myId && a.consumed)) return true
+    if ((meal.tiffin_contributions || []).some((c) => c.user_id === myId)) return true
+    return false
+  }
+
+  const canEditMeal = (meal: TiffinMeal) => isInvolvedInMeal(meal) || meal.created_by === myId
 
   const monthMeals = useMemo(() => meals.filter((m) => m.meal_date.startsWith(month)), [meals, month])
 
@@ -228,31 +243,39 @@ export function TiffinDetail() {
               <input type="month" className="input !w-auto !py-1.5 !text-xs" value={month} onChange={(e) => setMonth(e.target.value)} />
             </div>
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {memberMonthStats.map((m) => (
-                <div key={m.userId} className="flex items-center gap-3 px-5 py-3.5">
-                  <Avatar name={m.name} url={m.avatarUrl} />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">{m.name}{m.userId === myId ? ' (you)' : ''}</p>
-                    <p className="text-xs text-slate-500">
-                      Ate {m.ate} · Bought {m.bought} · Paid {formatCurrency(m.paid)}
-                    </p>
+              {memberMonthStats.map((m) => {
+                const mine = m.userId === myId
+                return (
+                  <div key={m.userId} className="flex items-center gap-3 px-5 py-3.5">
+                    <Avatar name={m.name} url={m.avatarUrl} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{m.name}{mine ? ' (you)' : ''}</p>
+                      <p className="text-xs text-slate-500">
+                        Ate {m.ate} · Bought {m.bought}
+                        {mine ? ` · Paid ${formatCurrency(m.paid)}` : ''}
+                      </p>
+                    </div>
+                    {mine ? (
+                      <p className={cn(
+                        'font-display text-lg font-semibold tabular-nums',
+                        m.net > 0.01 ? 'text-emerald-600' : m.net < -0.01 ? 'text-rose-600' : 'text-slate-400'
+                      )}>
+                        {Math.abs(m.net) < 0.01 ? '₹0' : m.net > 0 ? `+${formatCurrency(m.net)}` : `−${formatCurrency(Math.abs(m.net))}`}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-400">—</p>
+                    )}
                   </div>
-                  <p className={cn(
-                    'font-display text-lg font-semibold tabular-nums',
-                    m.net > 0.01 ? 'text-emerald-600' : m.net < -0.01 ? 'text-rose-600' : 'text-slate-400'
-                  )}>
-                    {Math.abs(m.net) < 0.01 ? '₹0' : m.net > 0 ? `+${formatCurrency(m.net)}` : `−${formatCurrency(Math.abs(m.net))}`}
-                  </p>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
-          {suggestions.length > 0 && (
+          {mySuggestions.length > 0 && (
             <div className="card p-5">
               <h2 className="font-display font-semibold mb-3">Suggested settle-up</h2>
               <ul className="space-y-2">
-                {suggestions.map((s, i) => (
+                {mySuggestions.map((s, i) => (
                   <li key={i} className="flex justify-between rounded-xl bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-sm">
                     <span><strong>{nameOf(s.from)}</strong> → <strong>{nameOf(s.to)}</strong></span>
                     <span className="font-semibold">{formatCurrency(s.amount)}</span>
@@ -287,13 +310,27 @@ export function TiffinDetail() {
                     <p className="text-sm text-slate-500">Not recorded</p>
                   ) : (
                     <div className="space-y-1.5 text-sm">
-                      <p>Cost <strong>{formatCurrency(Number(meal.total_cost))}</strong></p>
+                      <p>
+                        Cost{' '}
+                        <strong>
+                          {isInvolvedInMeal(meal) ? formatCurrency(Number(meal.total_cost)) : 'Hidden'}
+                        </strong>
+                      </p>
                       <p className="text-slate-500">
                         Ate: {(meal.tiffin_attendance || []).filter((a) => a.consumed).map((a) => nameOf(a.user_id)).join(', ') || '—'}
                       </p>
                       <p className="text-slate-500">
                         Bought/paid: {(meal.tiffin_contributions || []).map((c) => nameOf(c.user_id)).join(', ') || '—'}
                       </p>
+                      {canEditMeal(meal) && (
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-orange-700 dark:text-orange-300"
+                          onClick={() => setEditingMeal(meal)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Edit
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -320,15 +357,27 @@ export function TiffinDetail() {
               {meals.slice(0, 15).map((m) => {
                 const ate = (m.tiffin_attendance || []).filter((a) => a.consumed)
                 const paidBy = (m.tiffin_contributions || []).map((c) => nameOf(c.user_id)).join(', ')
+                const involved = isInvolvedInMeal(m)
                 return (
                   <article key={m.id} className="card p-4 flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-slate-500">{formatDate(m.meal_date)} · <span className="capitalize">{m.meal_type}</span></p>
-                      <p className="mt-1 font-semibold">{formatCurrency(Number(m.total_cost))}</p>
+                      <p className="mt-1 font-semibold">
+                        {involved ? formatCurrency(Number(m.total_cost)) : 'Amount hidden'}
+                      </p>
                       <p className="text-xs text-slate-500 mt-1">Paid by {paidBy || '—'}</p>
                       <p className="text-xs text-slate-500">Ate: {ate.map((a) => nameOf(a.user_id)).join(', ') || '—'}</p>
+                      {canEditMeal(m) && (
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-orange-700 dark:text-orange-300"
+                          onClick={() => setEditingMeal(m)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Edit
+                        </button>
+                      )}
                     </div>
-                    <span className="text-xs font-medium rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-1">{ate.length} people</span>
+                    <span className="text-xs font-medium rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-1 shrink-0">{ate.length} people</span>
                   </article>
                 )
               })}
@@ -368,6 +417,7 @@ export function TiffinDetail() {
                     monthMeals.map((m) => {
                       const ate = (m.tiffin_attendance || []).filter((a) => a.consumed)
                       const paid = (m.tiffin_contributions || []).map((c) => nameOf(c.user_id)).join(', ')
+                      const involved = isInvolvedInMeal(m)
                       return (
                         <tr key={m.id} className="border-b border-slate-50 dark:border-slate-800/80">
                           <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
@@ -378,7 +428,9 @@ export function TiffinDetail() {
                           <td className="px-3 py-3 text-xs text-slate-600 dark:text-slate-300 max-w-[180px]">
                             {ate.map((a) => nameOf(a.user_id)).join(', ') || '—'}
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold tabular-nums">{formatCurrency(Number(m.total_cost))}</td>
+                          <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                            {involved ? formatCurrency(Number(m.total_cost)) : '—'}
+                          </td>
                         </tr>
                       )
                     })
@@ -404,22 +456,27 @@ export function TiffinDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {memberMonthStats.map((m) => (
-                    <tr key={m.userId} className="border-b border-slate-50 dark:border-slate-800/80">
-                      <td className="px-5 py-3 font-medium">{m.name}</td>
-                      <td className="px-3 py-3 text-center">{m.ate}</td>
-                      <td className="px-3 py-3 text-center">{m.bought}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{formatCurrency(m.paid)}</td>
-                      <td className={cn(
-                        'px-5 py-3 text-right font-semibold tabular-nums',
-                        m.net > 0.01 ? 'text-emerald-600' : m.net < -0.01 ? 'text-rose-600' : 'text-slate-400'
-                      )}>
-                        {Math.abs(m.net) < 0.01 ? (
-                          <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> 0</span>
-                        ) : m.net > 0 ? `+${formatCurrency(m.net)}` : `−${formatCurrency(Math.abs(m.net))}`}
-                      </td>
-                    </tr>
-                  ))}
+                  {memberMonthStats.map((m) => {
+                    const mine = m.userId === myId
+                    return (
+                      <tr key={m.userId} className="border-b border-slate-50 dark:border-slate-800/80">
+                        <td className="px-5 py-3 font-medium">{m.name}{mine ? ' (you)' : ''}</td>
+                        <td className="px-3 py-3 text-center">{m.ate}</td>
+                        <td className="px-3 py-3 text-center">{m.bought}</td>
+                        <td className="px-3 py-3 text-right tabular-nums">{mine ? formatCurrency(m.paid) : '—'}</td>
+                        <td className={cn(
+                          'px-5 py-3 text-right font-semibold tabular-nums',
+                          mine && m.net > 0.01 && 'text-emerald-600',
+                          mine && m.net < -0.01 && 'text-rose-600',
+                          (!mine || Math.abs(m.net) < 0.01) && 'text-slate-400'
+                        )}>
+                          {!mine ? '—' : Math.abs(m.net) < 0.01 ? (
+                            <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> 0</span>
+                          ) : m.net > 0 ? `+${formatCurrency(m.net)}` : `−${formatCurrency(Math.abs(m.net))}`}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -433,35 +490,47 @@ export function TiffinDetail() {
               <p className="p-5 text-sm text-slate-500">No settlements yet</p>
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                {settlements.map((s) => (
-                  <li key={s.id} className="flex justify-between gap-3 px-5 py-3 text-sm">
-                    <div>
-                      <p><strong>{nameOf(s.from_user_id)}</strong> → <strong>{nameOf(s.to_user_id)}</strong></p>
-                      <p className="text-xs text-slate-500">{formatDate(s.settlement_date)}</p>
-                    </div>
-                    <span className="font-semibold text-emerald-600">{formatCurrency(Number(s.amount))}</span>
-                  </li>
-                ))}
+                {settlements.map((s) => {
+                  const mine = myId === s.from_user_id || myId === s.to_user_id
+                  return (
+                    <li key={s.id} className="flex justify-between gap-3 px-5 py-3 text-sm">
+                      <div>
+                        <p><strong>{nameOf(s.from_user_id)}</strong> → <strong>{nameOf(s.to_user_id)}</strong></p>
+                        <p className="text-xs text-slate-500">{formatDate(s.settlement_date)}</p>
+                      </div>
+                      <span className="font-semibold text-emerald-600">
+                        {mine ? formatCurrency(Number(s.amount)) : '—'}
+                      </span>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </div>
         </div>
       )}
 
-      <Modal open={mealOpen} onClose={() => setMealOpen(false)} title="Add meal" size="lg">
+      <Modal
+        open={mealOpen || !!editingMeal}
+        onClose={() => { setMealOpen(false); setEditingMeal(null) }}
+        title={editingMeal ? 'Edit meal' : 'Add meal'}
+        size="lg"
+      >
         <MealForm
+          key={editingMeal?.id || 'new'}
           group={group}
           members={members}
           mealType={mealType}
-          onDone={() => { setMealOpen(false); setTab('meals'); load() }}
+          initial={editingMeal}
+          onDone={() => { setMealOpen(false); setEditingMeal(null); setTab('meals'); load() }}
         />
       </Modal>
 
       <Modal open={settleOpen} onClose={() => setSettleOpen(false)} title="Settle up">
-        {suggestions.length > 0 && (
+        {mySuggestions.length > 0 && (
           <div className="mb-4 rounded-2xl border border-orange-100 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20 p-3 text-sm space-y-1">
             <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300 mb-2">Suggested</p>
-            {suggestions.slice(0, 4).map((s, i) => (
+            {mySuggestions.slice(0, 4).map((s, i) => (
               <div key={i} className="flex justify-between px-2 py-1">
                 <span>{nameOf(s.from)} → {nameOf(s.to)}</span>
                 <span className="font-semibold">{formatCurrency(s.amount)}</span>
