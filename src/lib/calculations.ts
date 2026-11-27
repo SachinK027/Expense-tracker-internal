@@ -219,7 +219,7 @@ export function suggestSettlements(balances: MemberBalance[]): BalancePair[] {
 export function calculateShares(
   total: number,
   splitType: 'equal' | 'exact' | 'percentage' | 'shares',
-  participants: { userId: string; value?: number }[]
+  participants: { userId: string; value?: number | null }[]
 ): { userId: string; shareAmount: number }[] {
   if (!participants.length) return []
   const n = participants.length
@@ -232,7 +232,31 @@ export function calculateShares(
     return shares
   }
   if (splitType === 'exact') {
-    return participants.map((p) => ({ userId: p.userId, shareAmount: roundMoney(Number(p.value || 0)) }))
+    // value = number → fixed amount; value = null/undefined → auto-share leftover equally
+    const fixed = participants.filter((p) => p.value != null && !Number.isNaN(Number(p.value)))
+    const auto = participants.filter((p) => p.value == null || Number.isNaN(Number(p.value)))
+    const fixedSum = roundMoney(fixed.reduce((s, p) => s + Number(p.value || 0), 0))
+
+    if (auto.length === 0) {
+      return participants.map((p) => ({ userId: p.userId, shareAmount: roundMoney(Number(p.value || 0)) }))
+    }
+
+    const leftover = roundMoney(total - fixedSum)
+    const pot = Math.max(0, leftover)
+    const base = Math.floor((pot * 100) / auto.length) / 100
+    const rem = roundMoney(pot - roundMoney(base * auto.length))
+    const autoMap = new Map<string, number>()
+    auto.forEach((p, i) => {
+      autoMap.set(p.userId, roundMoney(base + (i === 0 ? rem : 0)))
+    })
+
+    return participants.map((p) => ({
+      userId: p.userId,
+      shareAmount:
+        p.value != null && !Number.isNaN(Number(p.value))
+          ? roundMoney(Number(p.value))
+          : autoMap.get(p.userId) || 0,
+    }))
   }
   if (splitType === 'percentage') {
     const shares = participants.map((p) => ({

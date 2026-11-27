@@ -10,8 +10,9 @@ import { Spinner } from '@/components/ui/Loading'
 
 const CATEGORIES = ['general', 'food', 'travel', 'rent', 'utilities', 'entertainment', 'other']
 const SPLIT_OPTIONS: { id: SplitType; label: string; hint: string }[] = [
-  { id: 'equal', label: 'Equal', hint: 'Same amount each' },
-  { id: 'percentage', label: '%', hint: 'By percentage' },
+  { id: 'equal', label: 'Equal', hint: 'Same each' },
+  { id: 'exact', label: 'Amount', hint: 'Enter ₹, rest auto' },
+  { id: 'percentage', label: '%', hint: 'By percent' },
   { id: 'shares', label: 'Counts', hint: 'A×2, B×1…' },
 ]
 
@@ -37,6 +38,10 @@ function defaultValues(
       map[id] = String(roundMoney(100 / Math.max(ids.length, 1)))
     } else if (splitType === 'shares') {
       map[id] = '1'
+    } else if (splitType === 'exact') {
+      // Prefer stored share amounts so edit reloads correctly; blank = auto for new
+      if (prev?.share_amount != null && existing) map[id] = String(prev.share_amount)
+      else map[id] = ''
     } else {
       map[id] = ''
     }
@@ -59,16 +64,14 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
   const [category, setCategory] = useState(initial?.category || 'general')
   const [date, setDate] = useState(initial?.expense_date || todayISO())
   const [notes, setNotes] = useState(initial?.notes || '')
-  const [splitType, setSplitType] = useState<SplitType>(
-    initial?.split_type === 'exact' ? 'equal' : initial?.split_type || 'equal'
-  )
+  const [splitType, setSplitType] = useState<SplitType>(initial?.split_type || 'equal')
   const [participantIds, setParticipantIds] = useState<string[]>(
     initial?.expense_participants?.map((p) => p.user_id) || members.map((m) => m.user_id)
   )
   const [values, setValues] = useState<Record<string, string>>(() =>
     defaultValues(
       initial?.expense_participants?.map((p) => p.user_id) || members.map((m) => m.user_id),
-      initial?.split_type === 'exact' ? 'equal' : initial?.split_type || 'equal',
+      initial?.split_type || 'equal',
       initial
     )
   )
@@ -78,15 +81,20 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
 
   const participantInputs = useMemo(
     () =>
-      participantIds.map((id) => ({
-        userId: id,
-        value: splitType === 'equal' ? undefined : Number(values[id]) || 0,
-      })),
+      participantIds.map((id) => {
+        if (splitType === 'equal') return { userId: id, value: undefined as number | null | undefined }
+        if (splitType === 'exact') {
+          const raw = values[id]
+          if (raw === '' || raw == null) return { userId: id, value: null }
+          return { userId: id, value: Number(raw) }
+        }
+        return { userId: id, value: Number(values[id]) || 0 }
+      }),
     [participantIds, splitType, values]
   )
 
   const preview = useMemo(
-    () => calculateShares(total, splitType === 'exact' ? 'equal' : splitType, participantInputs),
+    () => calculateShares(total, splitType, participantInputs),
     [total, splitType, participantInputs]
   )
 
@@ -98,6 +106,20 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
     () => participantIds.reduce((s, id) => s + (Number(values[id]) || 0), 0),
     [participantIds, values]
   )
+  const exactFixedSum = useMemo(
+    () =>
+      participantIds.reduce((s, id) => {
+        const raw = values[id]
+        if (raw === '' || raw == null) return s
+        return s + (Number(raw) || 0)
+      }, 0),
+    [participantIds, values]
+  )
+  const exactAutoCount = useMemo(
+    () => participantIds.filter((id) => values[id] === '' || values[id] == null).length,
+    [participantIds, values]
+  )
+  const exactLeft = roundMoney(total - exactFixedSum)
 
   const applySplitType = (next: SplitType) => {
     if (hasRepayments) return
@@ -120,7 +142,11 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
           ...prev,
           [id]:
             prev[id] ||
-            (splitType === 'shares' ? '1' : splitType === 'percentage' ? String(roundMoney(100 / Math.max(next.length, 1))) : ''),
+            (splitType === 'shares'
+              ? '1'
+              : splitType === 'percentage'
+                ? String(roundMoney(100 / Math.max(next.length, 1)))
+                : ''),
         }
       })
       return next
@@ -167,21 +193,32 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
         return false
       }
     }
+    if (splitType === 'exact') {
+      if (exactFixedSum - total > 0.05) {
+        toast.error(`Entered amounts (${formatCurrency(exactFixedSum)}) exceed total ${formatCurrency(total)}`)
+        return false
+      }
+      if (exactAutoCount === 0 && Math.abs(exactFixedSum - total) > 0.05) {
+        toast.error(`Amounts must add to ${formatCurrency(total)} (now ${formatCurrency(exactFixedSum)})`)
+        return false
+      }
+      if (exactAutoCount > 0 && exactLeft < -0.05) {
+        toast.error('Entered amounts exceed total')
+        return false
+      }
+      if (participantIds.some((id) => values[id] !== '' && values[id] != null && Number(values[id]) < 0)) {
+        toast.error('Amounts cannot be negative')
+        return false
+      }
+    }
     return true
   }
 
-  const buildShares = () =>
-    calculateShares(
-      total,
-      splitType === 'exact' ? 'equal' : splitType,
-      participantIds.map((id) => ({
-        userId: id,
-        value: splitType === 'equal' ? undefined : Number(values[id]) || 0,
-      }))
-    )
+  const buildShares = () => calculateShares(total, splitType, participantInputs)
 
-  const shareValueFor = (userId: string) => {
+  const shareValueFor = (userId: string, shareAmount: number) => {
     if (splitType === 'equal') return null
+    if (splitType === 'exact') return shareAmount
     return Number(values[userId]) || 0
   }
 
@@ -241,7 +278,7 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
           expense_id: initial.id,
           user_id: s.userId,
           share_amount: s.shareAmount,
-          share_value: shareValueFor(s.userId),
+          share_value: shareValueFor(s.userId, s.shareAmount),
         }))
       )
 
@@ -307,7 +344,7 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
         expense_id: exp.id,
         user_id: s.userId,
         share_amount: s.shareAmount,
-        share_value: shareValueFor(s.userId),
+        share_value: shareValueFor(s.userId, s.shareAmount),
       }))
     )
 
@@ -396,7 +433,7 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
 
       <div>
         <label className="label">Split method</label>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {SPLIT_OPTIONS.map((opt) => (
             <button
               key={opt.id}
@@ -442,10 +479,31 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
             {shareSum > 0 && total > 0 ? ` · ${formatCurrency(roundMoney(total / shareSum))} per count` : ''}
           </p>
         )}
+        {splitType === 'exact' && (
+          <p
+            className={`mb-2 text-xs ${
+              exactLeft < -0.05
+                ? 'text-rose-600'
+                : exactAutoCount > 0
+                  ? 'text-slate-500'
+                  : Math.abs(exactLeft) < 0.05
+                    ? 'text-emerald-600'
+                    : 'text-amber-600'
+            }`}
+          >
+            {exactAutoCount > 0
+              ? `Entered ${formatCurrency(exactFixedSum)} · leftover ${formatCurrency(Math.max(0, exactLeft))} auto-splits among ${exactAutoCount} (leave blank to auto)`
+              : Math.abs(exactLeft) < 0.05
+                ? `Amounts add to ${formatCurrency(total)} ✓`
+                : `Amounts are ${formatCurrency(exactFixedSum)} — need ${formatCurrency(total)}`}
+          </p>
+        )}
         <div className="max-h-64 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 p-2">
           {members.map((m) => {
             const selected = participantIds.includes(m.user_id)
             const shareAmt = preview.find((p) => p.userId === m.user_id)?.shareAmount || 0
+            const isAutoExact =
+              splitType === 'exact' && selected && (values[m.user_id] === '' || values[m.user_id] == null)
             return (
               <div
                 key={m.user_id}
@@ -463,24 +521,37 @@ export function GroupExpenseForm({ groupId, groupName, members, initial, onDone 
                 </span>
                 {selected && splitType !== 'equal' && (
                   <div className="flex items-center gap-1 shrink-0">
+                    {splitType === 'exact' && (
+                      <span className="text-[10px] text-slate-400">₹</span>
+                    )}
                     <input
                       type="number"
                       min={splitType === 'shares' ? 1 : 0}
-                      step={splitType === 'percentage' ? 0.1 : 1}
+                      step={splitType === 'percentage' ? 0.1 : 0.01}
                       disabled={hasRepayments}
-                      className="input !w-16 !py-1 !px-2 !text-xs"
+                      className="input !w-[4.5rem] !py-1 !px-2 !text-xs"
+                      placeholder={splitType === 'exact' ? 'auto' : undefined}
                       value={values[m.user_id] ?? ''}
                       onChange={(e) => setValue(m.user_id, e.target.value)}
-                      aria-label={splitType === 'percentage' ? 'Percent' : 'Counts'}
+                      aria-label={
+                        splitType === 'percentage' ? 'Percent' : splitType === 'exact' ? 'Amount' : 'Counts'
+                      }
                     />
-                    <span className="text-[10px] text-slate-400 w-4">
-                      {splitType === 'percentage' ? '%' : '×'}
-                    </span>
+                    {splitType !== 'exact' && (
+                      <span className="text-[10px] text-slate-400 w-4">
+                        {splitType === 'percentage' ? '%' : '×'}
+                      </span>
+                    )}
                   </div>
                 )}
                 {selected && total > 0 && (
-                  <span className="text-xs tabular-nums text-slate-500 w-16 text-right shrink-0">
+                  <span
+                    className={`text-xs tabular-nums w-16 text-right shrink-0 ${
+                      isAutoExact ? 'text-brand-600 font-medium' : 'text-slate-500'
+                    }`}
+                  >
                     {formatCurrency(shareAmt)}
+                    {isAutoExact ? ' ·' : ''}
                   </span>
                 )}
               </div>
