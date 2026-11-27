@@ -235,16 +235,28 @@ export function calculateShares(
     return participants.map((p) => ({ userId: p.userId, shareAmount: roundMoney(Number(p.value || 0)) }))
   }
   if (splitType === 'percentage') {
-    return participants.map((p) => ({
+    const shares = participants.map((p) => ({
       userId: p.userId,
       shareAmount: roundMoney((total * Number(p.value || 0)) / 100),
     }))
+    const sum = roundMoney(shares.reduce((s, x) => s + x.shareAmount, 0))
+    const remainder = roundMoney(total - sum)
+    if (shares.length && Math.abs(remainder) >= 0.01) {
+      shares[0].shareAmount = roundMoney(shares[0].shareAmount + remainder)
+    }
+    return shares
   }
   const totalShares = participants.reduce((s, p) => s + Number(p.value || 0), 0) || 1
-  return participants.map((p) => ({
+  const shares = participants.map((p) => ({
     userId: p.userId,
     shareAmount: roundMoney((total * Number(p.value || 0)) / totalShares),
   }))
+  const sum = roundMoney(shares.reduce((s, x) => s + x.shareAmount, 0))
+  const remainder = roundMoney(total - sum)
+  if (shares.length && Math.abs(remainder) >= 0.01) {
+    shares[0].shareAmount = roundMoney(shares[0].shareAmount + remainder)
+  }
+  return shares
 }
 
 export function expenseStatusForUser(

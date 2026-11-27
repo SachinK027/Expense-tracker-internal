@@ -3,7 +3,7 @@ import toast from 'react-hot-toast'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { syncFrontedPayment } from '@/lib/personalSync'
-import { todayISO, formatCurrency } from '@/lib/utils'
+import { todayISO, formatCurrency, roundMoney } from '@/lib/utils'
 import type { MealType, TiffinGroup, TiffinMeal, TiffinMember } from '@/types/database'
 import { Spinner } from '@/components/ui/Loading'
 
@@ -15,6 +15,19 @@ interface Props {
   onDone: () => void
 }
 
+/** Portions UI = how many tiffins that person ate. Stored as guest_count = portions - 1. */
+function initialPortions(initial: TiffinMeal | null | undefined, members: TiffinMember[]) {
+  const map: Record<string, number> = {}
+  if (initial) {
+    for (const a of initial.tiffin_attendance || []) {
+      if (a.consumed) map[a.user_id] = Math.max(1, 1 + (a.guest_count || 0))
+    }
+  } else {
+    for (const m of members) map[m.user_id] = 1
+  }
+  return map
+}
+
 export function MealForm({ group, members, mealType, initial, onDone }: Props) {
   const { user } = useAuth()
   const isEdit = Boolean(initial?.id)
@@ -23,24 +36,64 @@ export function MealForm({ group, members, mealType, initial, onDone }: Props) {
   const [type, setType] = useState<MealType>(initial?.meal_type || mealType)
   const [totalCost, setTotalCost] = useState(initial ? String(initial.total_cost) : '')
   const [notes, setNotes] = useState(initial?.notes || '')
-  const [consumerIds, setConsumerIds] = useState<string[]>(
-    initial
-      ? (initial.tiffin_attendance || []).filter((a) => a.consumed).map((a) => a.user_id)
-      : members.map((m) => m.user_id)
-  )
+  const [portions, setPortions] = useState<Record<string, number>>(() => initialPortions(initial, members))
   const [saving, setSaving] = useState(false)
 
+  const consumerIds = useMemo(
+    () => Object.keys(portions).filter((id) => (portions[id] || 0) > 0),
+    [portions]
+  )
+
   const cost = Number(totalCost) || 0
-  const perHead = useMemo(() => {
-    if (!consumerIds.length || cost <= 0) return 0
-    return Math.round((cost / consumerIds.length) * 100) / 100
-  }, [cost, consumerIds])
+  const totalHeads = useMemo(
+    () => consumerIds.reduce((s, id) => s + (portions[id] || 0), 0),
+    [consumerIds, portions]
+  )
+  const perPortion = useMemo(() => {
+    if (!totalHeads || cost <= 0) return 0
+    return roundMoney(cost / totalHeads)
+  }, [cost, totalHeads])
 
   const label = (m: TiffinMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
 
+  const isSelected = (id: string) => (portions[id] || 0) > 0
+
   const toggle = (id: string) => {
-    setConsumerIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]))
+    setPortions((prev) => {
+      if ((prev[id] || 0) > 0) {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      }
+      return { ...prev, [id]: 1 }
+    })
   }
+
+  const setPortionCount = (id: string, n: number) => {
+    const v = Math.max(1, Math.floor(n) || 1)
+    setPortions((prev) => ({ ...prev, [id]: v }))
+  }
+
+  const selectAll = () => {
+    const next: Record<string, number> = {}
+    for (const m of members) next[m.user_id] = portions[m.user_id] || 1
+    setPortions(next)
+  }
+
+  const clearAll = () => setPortions({})
+
+  const buildAttendance = (mealId: string, payerId: string) =>
+    members.map((m) => {
+      const count = portions[m.user_id] || 0
+      return {
+        meal_id: mealId,
+        user_id: m.user_id,
+        consumed: count > 0,
+        brought_food: m.user_id === payerId,
+        guest_count: count > 0 ? Math.max(0, count - 1) : 0,
+        marked_by: user!.id,
+      }
+    })
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -49,8 +102,8 @@ export function MealForm({ group, members, mealType, initial, onDone }: Props) {
       toast.error('Enter meal amount')
       return
     }
-    if (!consumerIds.length) {
-      toast.error('Select who ate')
+    if (!consumerIds.length || totalHeads <= 0) {
+      toast.error('Select who ate (and portions)')
       return
     }
 
@@ -75,16 +128,9 @@ export function MealForm({ group, members, mealType, initial, onDone }: Props) {
 
       await supabase.from('tiffin_attendance').delete().eq('meal_id', initial.id)
 
-      const attendanceRows = members.map((m) => ({
-        meal_id: initial.id,
-        user_id: m.user_id,
-        consumed: consumerIds.includes(m.user_id),
-        brought_food: m.user_id === payerId,
-        guest_count: 0,
-        marked_by: user.id,
-      }))
-
-      const { error: attErr } = await supabase.from('tiffin_attendance').insert(attendanceRows)
+      const { error: attErr } = await supabase
+        .from('tiffin_attendance')
+        .insert(buildAttendance(initial.id, payerId))
       if (attErr) {
         setSaving(false)
         toast.error(attErr.message)
@@ -164,16 +210,9 @@ export function MealForm({ group, members, mealType, initial, onDone }: Props) {
     await supabase.from('tiffin_attendance').delete().eq('meal_id', meal.id)
     await supabase.from('tiffin_contributions').delete().eq('meal_id', meal.id)
 
-    const attendanceRows = members.map((m) => ({
-      meal_id: meal.id,
-      user_id: m.user_id,
-      consumed: consumerIds.includes(m.user_id),
-      brought_food: m.user_id === user.id,
-      guest_count: 0,
-      marked_by: user.id,
-    }))
-
-    const { error: attErr } = await supabase.from('tiffin_attendance').insert(attendanceRows)
+    const { error: attErr } = await supabase
+      .from('tiffin_attendance')
+      .insert(buildAttendance(meal.id, user.id))
     const { data: contrib, error: cErr } = await supabase
       .from('tiffin_contributions')
       .insert({ meal_id: meal.id, user_id: user.id, amount: cost })
@@ -259,49 +298,75 @@ export function MealForm({ group, members, mealType, initial, onDone }: Props) {
       </div>
 
       <p className="rounded-xl bg-brand-50 dark:bg-brand-950/40 px-3 py-2 text-xs text-brand-800 dark:text-brand-200">
-        {isEdit
-          ? 'Update cost and who ate. Split recalculates equally.'
-          : 'You bought & paid this tiffin. Cost splits equally among who ate'}
-        {perHead > 0 ? ` → ${formatCurrency(perHead)} each` : ''}.
+        Cost splits by portions (e.g. A took 2, B took 1).
+        {perPortion > 0 ? ` → ${formatCurrency(perPortion)} per portion · ${totalHeads} total` : ''}
       </p>
 
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <label className="label !mb-0">Who ate?</label>
+          <label className="label !mb-0">Who ate? (portions)</label>
           <div className="flex gap-2 text-xs font-semibold">
-            <button
-              type="button"
-              className="text-brand-700 dark:text-brand-300"
-              onClick={() => setConsumerIds(members.map((m) => m.user_id))}
-            >
+            <button type="button" className="text-brand-700 dark:text-brand-300" onClick={selectAll}>
               Select all
             </button>
             <span className="text-slate-300">|</span>
-            <button type="button" className="text-slate-500" onClick={() => setConsumerIds([])}>
+            <button type="button" className="text-slate-500" onClick={clearAll}>
               Clear
             </button>
           </div>
         </div>
-        <div className="max-h-52 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 p-2">
-          {members.map((m) => (
-            <label
-              key={m.user_id}
-              className="flex items-center gap-2 rounded-xl px-2 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50"
-            >
-              <input
-                type="checkbox"
-                checked={consumerIds.includes(m.user_id)}
-                onChange={() => toggle(m.user_id)}
-              />
-              <span className="flex-1">
-                {label(m)}
-                {m.user_id === user?.id ? ' (you)' : ''}
-              </span>
-              {consumerIds.includes(m.user_id) && perHead > 0 && (
-                <span className="text-xs text-slate-500 tabular-nums">{formatCurrency(perHead)}</span>
-              )}
-            </label>
-          ))}
+        <div className="max-h-56 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 p-2">
+          {members.map((m) => {
+            const selected = isSelected(m.user_id)
+            const count = portions[m.user_id] || 0
+            const theirCost = selected && perPortion > 0 ? roundMoney(perPortion * count) : 0
+            return (
+              <div
+                key={m.user_id}
+                className="flex items-center gap-2 rounded-xl px-2 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              >
+                <input type="checkbox" checked={selected} onChange={() => toggle(m.user_id)} />
+                <span className="flex-1 min-w-0 truncate">
+                  {label(m)}
+                  {m.user_id === user?.id ? ' (you)' : ''}
+                </span>
+                {selected && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      className="h-7 w-7 rounded-lg border border-slate-200 dark:border-slate-600 text-sm font-semibold"
+                      onClick={() => setPortionCount(m.user_id, count - 1)}
+                      aria-label="Less"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      className="input !w-12 !py-1 !px-1 !text-center !text-xs"
+                      value={count}
+                      onChange={(e) => setPortionCount(m.user_id, Number(e.target.value))}
+                      aria-label="Portions"
+                    />
+                    <button
+                      type="button"
+                      className="h-7 w-7 rounded-lg border border-slate-200 dark:border-slate-600 text-sm font-semibold"
+                      onClick={() => setPortionCount(m.user_id, count + 1)}
+                      aria-label="More"
+                    >
+                      +
+                    </button>
+                  </div>
+                )}
+                {selected && theirCost > 0 && (
+                  <span className="text-xs text-slate-500 tabular-nums w-14 text-right shrink-0">
+                    {formatCurrency(theirCost)}
+                  </span>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
 

@@ -99,7 +99,7 @@ export function TiffinDetail() {
     return false
   }
 
-  const canEditMeal = (meal: TiffinMeal) => isInvolvedInMeal(meal) || meal.created_by === myId
+  const canEditMeal = (meal: TiffinMeal) => meal.created_by === myId
 
   const monthMeals = useMemo(() => meals.filter((m) => m.meal_date.startsWith(month)), [meals, month])
 
@@ -317,7 +317,14 @@ export function TiffinDetail() {
                         </strong>
                       </p>
                       <p className="text-slate-500">
-                        Ate: {(meal.tiffin_attendance || []).filter((a) => a.consumed).map((a) => nameOf(a.user_id)).join(', ') || '—'}
+                        Ate:{' '}
+                        {(meal.tiffin_attendance || [])
+                          .filter((a) => a.consumed)
+                          .map((a) => {
+                            const n = 1 + (a.guest_count || 0)
+                            return n > 1 ? `${nameOf(a.user_id)}×${n}` : nameOf(a.user_id)
+                          })
+                          .join(', ') || '—'}
                       </p>
                       <p className="text-slate-500">
                         Bought/paid: {(meal.tiffin_contributions || []).map((c) => nameOf(c.user_id)).join(', ') || '—'}
@@ -366,7 +373,15 @@ export function TiffinDetail() {
                         {involved ? formatCurrency(Number(m.total_cost)) : 'Amount hidden'}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">Paid by {paidBy || '—'}</p>
-                      <p className="text-xs text-slate-500">Ate: {ate.map((a) => nameOf(a.user_id)).join(', ') || '—'}</p>
+                      <p className="text-xs text-slate-500">
+                        Ate:{' '}
+                        {ate
+                          .map((a) => {
+                            const n = 1 + (a.guest_count || 0)
+                            return n > 1 ? `${nameOf(a.user_id)}×${n}` : nameOf(a.user_id)
+                          })
+                          .join(', ') || '—'}
+                      </p>
                       {canEditMeal(m) && (
                         <button
                           type="button"
@@ -426,7 +441,12 @@ export function TiffinDetail() {
                           <td className="px-3 py-3 capitalize font-medium">{m.meal_type}</td>
                           <td className="px-3 py-3">{paid || '—'}</td>
                           <td className="px-3 py-3 text-xs text-slate-600 dark:text-slate-300 max-w-[180px]">
-                            {ate.map((a) => nameOf(a.user_id)).join(', ') || '—'}
+                            {ate
+                              .map((a) => {
+                                const n = 1 + (a.guest_count || 0)
+                                return n > 1 ? `${nameOf(a.user_id)}×${n}` : nameOf(a.user_id)
+                              })
+                              .join(', ') || '—'}
                           </td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums">
                             {involved ? formatCurrency(Number(m.total_cost)) : '—'}

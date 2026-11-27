@@ -17,16 +17,12 @@ interface Props {
 
 export function MarkPaidForm({ expense, members, groupName, onDone }: Props) {
   const { user } = useAuth()
-  const debtors = useMemo(
-    () =>
-      members
-        .map((m) => ({
-          member: m,
-          left: participantRemaining(expense, m.user_id),
-        }))
-        .filter((d) => d.left > 0.01),
-    [expense, members]
+
+  const myLeft = useMemo(
+    () => (user ? participantRemaining(expense, user.id) : 0),
+    [expense, user]
   )
+
   const creditors = useMemo(
     () =>
       members
@@ -34,38 +30,30 @@ export function MarkPaidForm({ expense, members, groupName, onDone }: Props) {
           member: m,
           owed: payerStillOwed(expense, m.user_id),
         }))
-        .filter((c) => c.owed > 0.01),
-    [expense, members]
+        .filter((c) => c.owed > 0.01 && c.member.user_id !== user?.id),
+    [expense, members, user?.id]
   )
 
-  const defaultFrom = debtors[0]?.member.user_id || ''
   const defaultTo = creditors[0]?.member.user_id || ''
-  const [fromId, setFromId] = useState(defaultFrom)
   const [toId, setToId] = useState(defaultTo)
-  const maxForFrom = debtors.find((d) => d.member.user_id === fromId)?.left || 0
-  const [amount, setAmount] = useState(maxForFrom ? String(maxForFrom) : '')
+  const [amount, setAmount] = useState(myLeft > 0 ? String(myLeft) : '')
   const [date, setDate] = useState(todayISO())
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
 
   const label = (m: GroupMember) => m.profiles?.full_name || m.profiles?.email || 'Member'
 
-  const onFromChange = (id: string) => {
-    setFromId(id)
-    const left = debtors.find((d) => d.member.user_id === id)?.left || 0
-    setAmount(left ? String(left) : '')
-  }
-
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (!user) return
+    const fromId = user.id
     const amt = roundMoney(Number(amount))
-    if (!fromId || !toId || fromId === toId || amt <= 0) {
-      toast.error('Pick payer, receiver and amount')
+    if (!toId || toId === fromId || amt <= 0) {
+      toast.error('Pick who you paid and an amount')
       return
     }
-    if (amt > maxForFrom + 0.05) {
-      toast.error(`Max left for this person is ${formatCurrency(maxForFrom)}`)
+    if (amt > myLeft + 0.05) {
+      toast.error(`You only owe ${formatCurrency(myLeft)} on this split`)
       return
     }
 
@@ -110,42 +98,37 @@ export function MarkPaidForm({ expense, members, groupName, onDone }: Props) {
     onDone()
   }
 
-  if (!debtors.length) {
-    return <p className="text-sm text-slate-500">Everyone on this split is already paid up.</p>
+  if (myLeft <= 0.01) {
+    return (
+      <p className="text-sm text-slate-500">
+        You have nothing left to pay on this split. Only each person can mark their own payment.
+      </p>
+    )
   }
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <p className="text-xs text-slate-500">
-        Mark that a person paid toward <strong>{expense.title}</strong>. This updates this split only
-        (and syncs personal expense/income).
+        You can only mark <strong>your own</strong> payment toward <strong>{expense.title}</strong>
+        {' '}({formatCurrency(myLeft)} left).
       </p>
       <div>
-        <label className="label">Who paid (debtor)</label>
-        <select className="input" value={fromId} onChange={(e) => onFromChange(e.target.value)}>
-          {debtors.map((d) => (
-            <option key={d.member.user_id} value={d.member.user_id}>
-              {label(d.member)} — left {formatCurrency(d.left)}
-            </option>
-          ))}
-        </select>
+        <label className="label">You are paying</label>
+        <input
+          className="input"
+          disabled
+          value={`${members.find((m) => m.user_id === user?.id)?.profiles?.full_name || 'You'} — ${formatCurrency(myLeft)} left`}
+        />
       </div>
       <div>
         <label className="label">Paid to (who fronted)</label>
-        <select className="input" value={toId} onChange={(e) => setToId(e.target.value)}>
+        <select className="input" value={toId} onChange={(e) => setToId(e.target.value)} required>
+          {creditors.length === 0 && <option value="">No one still owed</option>}
           {creditors.map((c) => (
             <option key={c.member.user_id} value={c.member.user_id}>
               {label(c.member)} — still owed {formatCurrency(c.owed)}
             </option>
           ))}
-          {creditors.length === 0 &&
-            members
-              .filter((m) => m.user_id !== fromId)
-              .map((m) => (
-                <option key={m.user_id} value={m.user_id}>
-                  {label(m)}
-                </option>
-              ))}
         </select>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -155,7 +138,7 @@ export function MarkPaidForm({ expense, members, groupName, onDone }: Props) {
             type="number"
             step="0.01"
             min="0.01"
-            max={maxForFrom || undefined}
+            max={myLeft || undefined}
             className="input"
             required
             value={amount}
@@ -171,7 +154,7 @@ export function MarkPaidForm({ expense, members, groupName, onDone }: Props) {
         <label className="label">Note</label>
         <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Cash / UPI…" />
       </div>
-      <button type="submit" className="btn-primary w-full !rounded-full" disabled={saving}>
+      <button type="submit" className="btn-primary w-full !rounded-full" disabled={saving || !toId}>
         {saving ? <Spinner className="!border-white/30 !border-t-white" /> : 'Mark paid'}
       </button>
     </form>

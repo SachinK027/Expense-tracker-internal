@@ -574,7 +574,7 @@ function RequestCard({
   const parts = expense.expense_participants || []
   const involvedIds = [...new Set([...(expense.expense_payments || []).map((p) => p.user_id), ...parts.map((p) => p.user_id)])]
   const iAmIn = involvedIds.includes(myId)
-  const canEdit = iAmIn || expense.created_by === myId
+  const canEdit = expense.created_by === myId
   const unpaidPeople = parts.filter((p) => participantRemaining(expense, p.user_id) > 0.01).length
   const totalPeople = parts.length || 1
   const paidPeople = Math.max(0, totalPeople - unpaidPeople)
@@ -648,14 +648,16 @@ function RequestCard({
                 <Pencil className="h-3.5 w-3.5" /> Edit
               </button>
             )}
-            {iAmIn && unpaidPeople > 0 ? (
+            {iAmIn && status.kind === 'owe' ? (
               <button type="button" onClick={onMarkPaid} className="btn-primary !rounded-full !py-2 !px-4 !text-xs">
                 Mark paid
               </button>
-            ) : iAmIn ? (
+            ) : iAmIn && unpaidPeople === 0 ? (
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
                 <CheckCircle2 className="h-3.5 w-3.5" /> Complete
               </span>
+            ) : iAmIn ? (
+              <span className="text-xs font-medium text-slate-400">Waiting on others</span>
             ) : null}
           </div>
         </div>
